@@ -45,7 +45,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
       _status = null;
     });
     try {
-      final info = await ZaloBotService(token).getMe();
+      final info = await _bot(store, token: token).getMe();
       await store.repo.updateSettings({
         'zaloBotToken': token,
         'zaloBotName': info.displayName,
@@ -62,6 +62,27 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
   // ------------------------------------------------------------- webhook
   final _webhookUrl = TextEditingController();
   final _webhookSecret = TextEditingController();
+
+  /// Client Zalo theo cấu hình nhóm. Trên web dùng Worker làm proxy, lấy
+  /// URL/secret đang gõ trong form (để dùng được ngay cả khi chưa bật webhook).
+  ZaloBotService _bot(TeamStore store, {String? token, String? workerUrl, String? secret}) {
+    final s = store.settings;
+    final base = token == null
+        ? s
+        : TeamSettings(
+            id: s.id,
+            name: s.name,
+            zaloBotToken: token,
+            zaloWebhookUrl: s.zaloWebhookUrl,
+            zaloWebhookSecret: s.zaloWebhookSecret,
+          );
+    return ZaloBotService.forTeam(
+      base,
+      store.repo.teamId,
+      workerUrl: workerUrl ?? _webhookUrl.text.trim(),
+      secret: secret ?? _webhookSecret.text.trim(),
+    );
+  }
 
   String _randomSecret() {
     const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -95,7 +116,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
       _status = null;
     });
     try {
-      final msg = await ZaloBotService(store.settings.zaloBotToken).setWebhook(url, secret);
+      final msg = await _bot(store, workerUrl: url, secret: secret).setWebhook(url, secret);
       await store.repo.updateSettings({
         'zaloWebhookUrl': url,
         'zaloWebhookSecret': secret,
@@ -113,7 +134,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     final store = TeamScope.of(context);
     setState(() => _busy = true);
     try {
-      await ZaloBotService(store.settings.zaloBotToken).deleteWebhook();
+      await _bot(store).deleteWebhook();
       await store.repo.updateSettings({'zaloWebhookUrl': ''});
       setState(() => _status = 'Đã tắt webhook, app quay lại tự hỏi Zalo (getUpdates).');
     } catch (e) {
@@ -146,7 +167,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
             : 'Đã có $n chat. Chọn nhóm bên dưới.');
         return;
       }
-      final updates = await ZaloBotService(token).getUpdates(timeoutSeconds: 25);
+      final updates = await _bot(store).getUpdates(timeoutSeconds: 25);
       setState(() {
         for (final u in updates) {
           _seen.removeWhere((s) => s.chatId == u.chatId);
@@ -196,7 +217,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     }
     setState(() => _busy = true);
     try {
-      await ZaloBotService(s.zaloBotToken).sendMessage(
+      await _bot(store).sendMessage(
         s.zaloGroupId,
         '🏓 ${s.name}: bot đã kết nối với app Quỹ Pickleball. '
         'Khi có vote, hãy Reply tin của bot: 1 = đi, 0 = không đi.',

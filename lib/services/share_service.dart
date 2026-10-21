@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/models.dart';
@@ -16,12 +15,20 @@ class ShareService {
   static Future<void> shareText(BuildContext context, String text,
       {String? subject}) async {
     final box = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(ShareParams(
-      text: text,
-      subject: subject,
-      sharePositionOrigin:
-          box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-    ));
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      await SharePlus.instance.share(ShareParams(
+        text: text,
+        subject: subject,
+        sharePositionOrigin:
+            box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+      ));
+    } catch (_) {
+      // Trình duyệt desktop không có share sheet: sao chép để dán vào Zalo.
+      await Clipboard.setData(ClipboardData(text: text));
+      messenger?.showSnackBar(
+          const SnackBar(content: Text('Đã sao chép nội dung, dán vào Zalo')));
+    }
   }
 
   static Future<void> shareImageBase64(
@@ -31,13 +38,22 @@ class ShareService {
     String? text,
   }) async {
     final box = context.findRenderObject() as RenderBox?;
+    final messenger = ScaffoldMessenger.maybeOf(context);
     final Uint8List bytes = ImageUtil.decode(base64);
-    await SharePlus.instance.share(ShareParams(
-      text: text,
-      files: [XFile.fromData(bytes, mimeType: 'image/jpeg', name: fileName)],
-      sharePositionOrigin:
-          box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-    ));
+    try {
+      await SharePlus.instance.share(ShareParams(
+        text: text,
+        files: [XFile.fromData(bytes, mimeType: 'image/jpeg', name: fileName)],
+        sharePositionOrigin:
+            box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+      ));
+    } catch (_) {
+      if (text != null && text.isNotEmpty) {
+        await Clipboard.setData(ClipboardData(text: text));
+      }
+      messenger?.showSnackBar(const SnackBar(
+          content: Text('Thiết bị không chia sẻ được ảnh. Hãy lưu ảnh QR rồi gửi thủ công.')));
+    }
   }
 
   // ----------------------------------------------------------- templates

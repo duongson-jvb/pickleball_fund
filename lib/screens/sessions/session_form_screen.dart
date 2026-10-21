@@ -78,7 +78,12 @@ class _SessionFormScreenState extends State<SessionFormScreen> {
           MaterialPageRoute(builder: (_) => SessionDetailScreen(sessionId: id)),
         );
       } else {
-        final s = widget.session!.copyWith(
+        // Lấy bản mới nhất (vote có thể vừa về) rồi chỉ ghi đè các trường của form.
+        final latest = store.sessions
+                .where((x) => x.id == widget.session!.id)
+                .firstOrNull ??
+            widget.session!;
+        final s = latest.copyWith(
           title: _title.text.trim(),
           date: _date,
           location: _location.text.trim(),

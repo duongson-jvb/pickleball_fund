@@ -1,42 +1,67 @@
 /**
- * Cloudflare Worker: nhận webhook từ Zalo Bot và ghi vào Firestore
- * teams/{teamId}/zaloInbox/{messageId}. App Quỹ Pickleball sẽ đọc hộp thư
- * này và biến reply thành vote.
+ * Cloudflare Worker cho app Quỹ Pickleball.
  *
- * URL webhook: https://<worker>.workers.dev/<teamId>
- * Biến môi trường (Settings → Variables):
+ * 1) Webhook Zalo:   POST https://<worker>.workers.dev/<teamId>
+ *    Nhận tin từ Zalo Bot, ghi vào Firestore teams/{teamId}/zaloInbox/{messageId}.
+ * 2) Proxy Zalo API: POST https://<worker>.workers.dev/<teamId>/zalo/<method>
+ *    Body: { "token": "<bot token>", "params": {...} }  → chuyển tiếp tới Zalo.
+ *    Cần cho bản web vì bot-api.zaloplatforms.com không bật CORS.
+ *
+ * Cả hai đều yêu cầu header  X-Bot-Api-Secret-Token = ZALO_SECRET.
+ *
+ * Biến môi trường (Settings → Variables and Secrets):
  *   FIREBASE_PROJECT_ID  = pickleball-fund-phm
- *   FIREBASE_API_KEY     = Web API key của Firebase (xem lib/firebase_options.dart)
- *   ZALO_SECRET          = chuỗi bí mật 8-256 ký tự, trùng với secret_token lúc setWebhook
+ *   FIREBASE_API_KEY     = Web API key của Firebase
+ *   ZALO_SECRET          = chuỗi bí mật 8-256 ký tự (chữ không dấu + số)
  *   TEAM_ID (tuỳ chọn)   = mã nhóm mặc định nếu URL không có /<teamId>
  */
 
+const ZALO_API = 'https://bot-api.zaloplatforms.com';
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Bot-Api-Secret-Token',
+  'Access-Control-Max-Age': '86400',
+};
+
 export default {
   async fetch(request, env) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+
     const url = new URL(request.url);
-    const teamId = url.pathname.replace(/^\/+|\/+$/g, '') || env.TEAM_ID || '';
+    const parts = url.pathname.split('/').filter(Boolean);
+    const teamId = parts[0] || env.TEAM_ID || '';
 
     if (request.method === 'GET') {
       return json({ ok: true, service: 'zalo-webhook', teamId: teamId || null });
     }
     if (request.method !== 'POST') {
-      return new Response('Method Not Allowed', { status: 405 });
+      return json({ ok: false, error: 'Method Not Allowed' }, 405);
     }
 
-    // Xác thực secret từ Zalo.
+    // Xác thực secret (Zalo gửi kèm khi webhook, app gửi kèm khi proxy).
     const secret = request.headers.get('X-Bot-Api-Secret-Token') || '';
     if (env.ZALO_SECRET && secret !== env.ZALO_SECRET) {
-      return new Response('Forbidden', { status: 403 });
+      return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
     }
     if (!teamId || teamId.length < 6) {
       return json({ ok: false, error: 'Thiếu teamId trong URL (/<teamId>)' }, 400);
     }
 
+    // ---- Proxy: /<teamId>/zalo/<method>
+    if (parts[1] === 'zalo' && parts[2]) {
+      return proxyZalo(parts[2], request);
+    }
+
+    // ---- Webhook từ Zalo
     let body;
     try {
       body = await request.json();
     } catch {
-      // Zalo gửi request kiểm tra khi setWebhook; trả 200 để xác minh thành công.
+      // Request kiểm tra của Zalo lúc setWebhook có thể không có JSON.
       return json({ ok: true, note: 'no json body' });
     }
 
@@ -83,6 +108,31 @@ export default {
   },
 };
 
+/** Chuyển tiếp lời gọi Zalo Bot API cho app (vượt CORS). */
+async function proxyZalo(method, request) {
+  if (!/^[a-zA-Z]+$/.test(method)) return json({ ok: false, error: 'Bad method' }, 400);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: 'Body phải là JSON {token, params}' }, 400);
+  }
+  const token = String(body?.token || '');
+  if (!token.includes(':')) return json({ ok: false, error: 'Thiếu token bot' }, 400);
+  const params = body?.params && typeof body.params === 'object' ? body.params : {};
+
+  const upstream = await fetch(`${ZALO_API}/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const text = await upstream.text();
+  return new Response(text, {
+    status: upstream.status,
+    headers: { 'Content-Type': 'application/json', ...CORS },
+  });
+}
+
 function s(v) {
   return { stringValue: String(v) };
 }
@@ -90,6 +140,6 @@ function s(v) {
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS },
   });
 }

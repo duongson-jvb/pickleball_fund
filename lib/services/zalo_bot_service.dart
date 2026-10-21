@@ -1,6 +1,9 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+
+import '../models/models.dart';
 
 /// Thông tin bot trả về từ getMe.
 class ZaloBotInfo {
@@ -98,23 +101,80 @@ class ZaloBotException implements Exception {
 }
 
 /// Client tối giản cho Zalo Bot API (https://bot-api.zaloplatforms.com).
+///
+/// Trên web, Zalo không bật CORS nên phải đi qua Cloudflare Worker
+/// ([proxyUrl] = URL worker đã có /teamId, [proxySecret] = ZALO_SECRET).
 class ZaloBotService {
-  ZaloBotService(this.token, {http.Client? client})
-      : _client = client ?? http.Client();
+  ZaloBotService(
+    this.token, {
+    this.proxyUrl,
+    this.proxySecret,
+    http.Client? client,
+  }) : _client = client ?? http.Client();
+
+  /// Tạo client theo cấu hình nhóm. Web → dùng proxy nếu đã có URL worker.
+  factory ZaloBotService.forTeam(
+    TeamSettings s,
+    String teamId, {
+    String? workerUrl,
+    String? secret,
+  }) {
+    final url = normalizeWorkerUrl(
+        (workerUrl ?? '').isNotEmpty ? workerUrl! : s.zaloWebhookUrl, teamId);
+    final sec = (secret ?? '').isNotEmpty ? secret! : s.zaloWebhookSecret;
+    final useProxy = kIsWeb && url.isNotEmpty;
+    return ZaloBotService(
+      s.zaloBotToken,
+      proxyUrl: useProxy ? url : null,
+      proxySecret: useProxy ? sec : null,
+    );
+  }
+
+  /// Chuẩn hoá URL worker về dạng `https://host/teamId` (bỏ dấu / thừa).
+  static String normalizeWorkerUrl(String url, String teamId) {
+    var u = url.trim();
+    if (u.isEmpty) return '';
+    if (!u.startsWith('http')) u = 'https://$u';
+    u = u.replaceAll(RegExp(r'/+$'), '');
+    if (!u.endsWith('/$teamId')) u = '$u/$teamId';
+    return u;
+  }
 
   final String token;
+  final String? proxyUrl;
+  final String? proxySecret;
   final http.Client _client;
 
-  Uri _uri(String method) =>
-      Uri.parse('https://bot-api.zaloplatforms.com/bot$token/$method');
+  bool get viaProxy => proxyUrl != null && proxyUrl!.isNotEmpty;
 
   Future<Map<String, dynamic>> _post(String method, Map<String, dynamic> body,
       {Duration timeout = const Duration(seconds: 20)}) async {
-    final res = await _client
-        .post(_uri(method),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(body))
-        .timeout(timeout);
+    if (token.isEmpty) throw ZaloBotException('Chưa có Bot Token');
+    if (kIsWeb && !viaProxy) {
+      throw ZaloBotException(
+          'Trình duyệt không gọi trực tiếp được Zalo. Điền URL Worker + secret ở mục Webhook, '
+          'hoặc dùng app trên điện thoại.');
+    }
+    final http.Response res;
+    try {
+      if (viaProxy) {
+        res = await _client
+            .post(Uri.parse('$proxyUrl/zalo/$method'),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Bot-Api-Secret-Token': proxySecret ?? '',
+                },
+                body: jsonEncode({'token': token, 'params': body}))
+            .timeout(timeout);
+      } else {
+        res = await _client
+            .post(Uri.parse('https://bot-api.zaloplatforms.com/bot$token/$method'),
+                headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))
+            .timeout(timeout);
+      }
+    } catch (e) {
+      throw ZaloBotException('Không kết nối được (${e.runtimeType})');
+    }
     final Map<String, dynamic> json;
     try {
       json = Map<String, dynamic>.from(jsonDecode(res.body) as Map);
@@ -122,10 +182,11 @@ class ZaloBotService {
       throw ZaloBotException('Phản hồi không hợp lệ (HTTP ${res.statusCode})');
     }
     if (json['ok'] != true) {
-      final code = (json['error_code'] as num?)?.toInt();
+      final code = (json['error_code'] as num?)?.toInt() ?? res.statusCode;
       // 408 = long polling hết giờ mà không có tin mới: không phải lỗi.
       if (code == 408 && method == 'getUpdates') return {'ok': true, 'result': []};
-      throw ZaloBotException(json['description']?.toString() ?? 'Lỗi', code);
+      throw ZaloBotException(
+          (json['description'] ?? json['error'] ?? 'Lỗi').toString(), code);
     }
     return json;
   }

@@ -5,10 +5,24 @@ import 'settlement.dart';
 
 /// Truy cập Firestore cho một nhóm: teams/{teamId}/...
 class TeamRepository {
-  TeamRepository(this.teamId) : _db = FirebaseFirestore.instance;
+  TeamRepository(this.teamId, {FirebaseFirestore? firestore})
+      : _db = firestore ?? FirebaseFirestore.instance;
 
   final String teamId;
   final FirebaseFirestore _db;
+
+  /// Hàng đợi tính tiền theo từng buổi / chi phí: hai lần lưu cùng lúc cho
+  /// cùng một buổi sẽ chạy tuần tự, tránh ghi trùng dòng sổ quỹ.
+  final Map<String, Future<void>> _settleChains = {};
+
+  Future<void> _chained(String key, Future<void> Function() job) {
+    final prev = _settleChains[key] ?? Future<void>.value();
+    final next = prev.catchError((_) {}).then((_) => job());
+    _settleChains[key] = next;
+    return next.whenComplete(() {
+      if (identical(_settleChains[key], next)) _settleChains.remove(key);
+    });
+  }
 
   DocumentReference<Map<String, dynamic>> get teamDoc =>
       _db.collection('teams').doc(teamId);
@@ -248,7 +262,10 @@ class TeamRepository {
   Future<void> saveAndSettleSession(
     Session session, {
     required int commonFundExcludingThis,
-  }) async {
+  }) =>
+      _chained('session:${session.id}', () => _settleSession(session, commonFundExcludingThis));
+
+  Future<void> _settleSession(Session session, int commonFundExcludingThis) async {
     final settlement = Settlement.computeSession(
       session: session,
       commonFundAvailable: commonFundExcludingThis,
@@ -323,8 +340,18 @@ class TeamRepository {
     Expense expense, {
     required List<String> allActivePlayerIds,
     required int commonFundExcludingThis,
-  }) async {
+  }) {
     final id = expense.id.isEmpty ? expenses.doc().id : expense.id;
+    return _chained('expense:$id',
+        () => _settleExpense(expense, id, allActivePlayerIds, commonFundExcludingThis));
+  }
+
+  Future<void> _settleExpense(
+    Expense expense,
+    String id,
+    List<String> allActivePlayerIds,
+    int commonFundExcludingThis,
+  ) async {
     final result = Settlement.computeExpense(
       expense: expense,
       allActivePlayerIds: allActivePlayerIds,
