@@ -1,0 +1,11 @@
+# Cấu hình Cloudflare Workers Builds khi repo này được kết nối trực tiếp với Cloudflare
+# (root directory = gốc repo). Worker thật nằm ở worker/src/index.js.
+# Nếu bạn deploy bằng tay trong thư mục worker/ thì dùng worker/wrangler.toml.
+name = "pickleball-zalo-webhook"
+main = "worker/src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "pickleball-fund-phm"
+FIREBASE_API_KEY = "AIzaSyBFmd11fse6sjw_rWaHMwxWz3RrzvXnqR8"
+# ZALO_SECRET đặt bằng Secret trên dashboard hoặc `wrangler secret put ZALO_SECRET`
