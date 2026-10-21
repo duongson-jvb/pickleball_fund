@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Ứng dụng nội bộ của team: dữ liệu nằm dưới teams/{teamId}.
+    // teamId đóng vai trò như "mật khẩu" của nhóm (chỉ ai biết mã nhóm mới truy cập được).
+    match /teams/{teamId}/{document=**} {
+      allow read, write: if teamId.size() >= 6;
+    }
+  }
+}
