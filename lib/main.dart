@@ -64,7 +64,9 @@ class _PickleballFundAppState extends State<PickleballFundApp> {
   @override
   Widget build(BuildContext context) {
     final scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF00897B));
-    return MaterialApp(
+    // TeamScope phải nằm TRÊN MaterialApp (tức trên Navigator) để mọi màn hình
+    // mở bằng Navigator.push cũng đọc được store.
+    final app = MaterialApp(
       title: 'Quỹ Pickleball',
       debugShowCheckedModeBanner: false,
       locale: const Locale('vi', 'VN'),
@@ -86,10 +88,9 @@ class _PickleballFundAppState extends State<PickleballFundApp> {
       ),
       home: _store == null
           ? TeamGateScreen(onJoin: _joinTeam)
-          : TeamScope(
-              store: _store!,
-              child: HomeScreen(teamId: _teamId!, onLeaveTeam: _leaveTeam),
-            ),
+          : HomeScreen(teamId: _teamId!, onLeaveTeam: _leaveTeam),
     );
+    if (_store == null) return app;
+    return TeamScope(store: _store!, child: app);
   }
 }

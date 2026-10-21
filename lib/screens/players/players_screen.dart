@@ -21,6 +21,7 @@ class PlayersScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text('Người chơi (${store.activePlayers.length})')),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'fab-players',
         onPressed: () => showPlayerForm(context),
         icon: const Icon(Icons.person_add),
         label: const Text('Thêm'),
