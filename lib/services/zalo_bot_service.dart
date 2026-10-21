@@ -38,6 +38,31 @@ class ZaloUpdate {
 
   bool get isGroup => chatType.toUpperCase() == 'GROUP';
 
+  /// Đọc từ document trong teams/{id}/zaloInbox do Cloudflare Worker ghi.
+  static ZaloUpdate? fromInboxDoc(String id, Map<String, dynamic> d) {
+    final chatId = d['chatId']?.toString() ?? '';
+    if (chatId.isEmpty) return null;
+    final rawDate = d['date'];
+    DateTime date;
+    if (rawDate is DateTime) {
+      date = rawDate;
+    } else if (rawDate != null && rawDate.runtimeType.toString() == 'Timestamp') {
+      date = (rawDate as dynamic).toDate() as DateTime;
+    } else {
+      date = DateTime.now();
+    }
+    return ZaloUpdate(
+      eventName: d['eventName']?.toString() ?? '',
+      messageId: d['messageId']?.toString() ?? id,
+      fromId: d['fromId']?.toString() ?? '',
+      fromName: d['fromName']?.toString() ?? '',
+      chatId: chatId,
+      chatType: d['chatType']?.toString() ?? 'PRIVATE',
+      text: d['text']?.toString() ?? '',
+      date: date,
+    );
+  }
+
   static ZaloUpdate? tryParse(dynamic raw) {
     if (raw is! Map) return null;
     final m = Map<String, dynamic>.from(raw);
@@ -121,6 +146,33 @@ class ZaloBotService {
     final json = await _post('sendMessage', {'chat_id': chatId, 'text': clipped});
     final r = (json['result'] as Map?) ?? {};
     return r['message_id']?.toString() ?? '';
+  }
+
+  /// Đăng ký webhook. Zalo tự gửi request kiểm tra và trả kết quả trong
+  /// `verification`. Trả về mô tả ngắn kết quả xác minh.
+  Future<String> setWebhook(String url, String secretToken) async {
+    final json = await _post('setWebhook', {'url': url, 'secret_token': secretToken});
+    final r = (json['result'] as Map?) ?? {};
+    final v = (r['verification'] as Map?) ?? {};
+    if (v.isEmpty) return 'Đã đăng ký webhook';
+    final ok = v['ok'] == true;
+    return '${ok ? '✅' : '❌'} ${v['outcome'] ?? ''} ${v['hint'] ?? ''}'.trim();
+  }
+
+  Future<void> deleteWebhook() async {
+    await _post('deleteWebhook', {});
+  }
+
+  /// URL webhook hiện tại (rỗng nếu chưa đặt).
+  Future<String> getWebhookInfo() async {
+    try {
+      final json = await _post('getWebhookInfo', {});
+      final r = (json['result'] as Map?) ?? {};
+      return r['url']?.toString() ?? '';
+    } on ZaloBotException catch (e) {
+      if (e.code == 404) return '';
+      rethrow;
+    }
   }
 
   /// Long polling: đợi tối đa [timeoutSeconds] giây để lấy tin mới.

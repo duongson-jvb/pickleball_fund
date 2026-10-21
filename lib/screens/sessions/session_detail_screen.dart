@@ -163,6 +163,11 @@ class _VoteTabState extends State<_VoteTab> {
     if (_polling || _disposed) return;
     final store = TeamScope.of(context);
     if (!store.settings.hasZaloBot || session.status != SessionStatus.voting) return;
+    if (store.settings.zaloWebhookMode) {
+      // Webhook đang bật: Zalo đẩy tin về Firestore, TeamStore tự xử lý.
+      setState(() => _botStatus = 'Webhook đang bật: vote từ Zalo tự về, không cần giữ màn hình này.');
+      return;
+    }
     _polling = true;
     setState(() => _botStatus = 'Đang chờ vote từ Zalo...');
     while (!_disposed) {
@@ -198,6 +203,11 @@ class _VoteTabState extends State<_VoteTab> {
 
   Future<void> _syncNow() async {
     final store = TeamScope.of(context);
+    if (store.settings.zaloWebhookMode) {
+      showSnack(context,
+          'Webhook đang bật: vote tự về qua Firestore. ${store.lastZaloInboxSummary ?? 'Chưa có tin mới.'}');
+      return;
+    }
     setState(() => _botBusy = true);
     try {
       final updates =

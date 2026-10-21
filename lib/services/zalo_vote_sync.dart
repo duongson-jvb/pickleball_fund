@@ -82,6 +82,7 @@ class ZaloVoteSync {
     List<ZaloUpdate> updates, {
     Session? target,
   }) async {
+    await rememberChats(store, updates);
     final session = target ?? pickTarget(store.sessions);
     if (session == null) {
       return ZaloSyncResult(target: null, ignoredCount: updates.length);
@@ -140,6 +141,22 @@ class ZaloVoteSync {
       pendingCount: pending.length,
       ignoredCount: ignored,
     );
+  }
+
+  /// Ghi nhớ các chat (nhóm / riêng) bot từng nhận tin để người dùng chọn nhóm.
+  static Future<void> rememberChats(TeamStore store, List<ZaloUpdate> updates) async {
+    if (updates.isEmpty) return;
+    final chats = <String, Map<String, dynamic>>{};
+    for (final u in updates) {
+      chats[u.chatId] = ZaloChat(
+        chatId: u.chatId,
+        isGroup: u.isGroup,
+        lastFromName: u.fromName,
+        lastText: u.text,
+        lastDate: u.date,
+      ).toMap();
+    }
+    await store.repo.updateSettings({'zaloChats': chats});
   }
 
   /// Gán thủ công một vote đang chờ cho người chơi, và nhớ Zalo id.

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/models.dart';
 import '../../services/team_store.dart';
 import '../../services/zalo_bot_service.dart';
 import '../../services/zalo_vote_sync.dart';
@@ -24,7 +25,11 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _token.text = TeamScope.of(context).settings.zaloBotToken;
+      final s = TeamScope.of(context).settings;
+      _token.text = s.zaloBotToken;
+      _webhookUrl.text = s.zaloWebhookUrl;
+      _webhookSecret.text = s.zaloWebhookSecret.isEmpty ? _randomSecret() : s.zaloWebhookSecret;
+      setState(() {});
     });
   }
 
@@ -54,6 +59,70 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     }
   }
 
+  // ------------------------------------------------------------- webhook
+  final _webhookUrl = TextEditingController();
+  final _webhookSecret = TextEditingController();
+
+  String _randomSecret() {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final seed = DateTime.now().microsecondsSinceEpoch;
+    var x = seed;
+    final sb = StringBuffer();
+    for (var i = 0; i < 32; i++) {
+      x = (x * 1103515245 + 12345) & 0x7fffffff;
+      sb.write(chars[x % chars.length]);
+    }
+    return sb.toString();
+  }
+
+  Future<void> _enableWebhook() async {
+    final store = TeamScope.of(context);
+    var url = _webhookUrl.text.trim();
+    final secret = _webhookSecret.text.trim();
+    if (url.isEmpty || !url.startsWith('https://')) {
+      showSnack(context, 'Nhập URL Worker dạng https://...workers.dev');
+      return;
+    }
+    if (secret.length < 8) {
+      showSnack(context, 'Secret cần ít nhất 8 ký tự (trùng với ZALO_SECRET trên Cloudflare)');
+      return;
+    }
+    // Tự thêm /<mã nhóm> nếu người dùng chỉ dán URL gốc của Worker.
+    final base = url.replaceAll(RegExp(r'/+$'), '');
+    if (!base.endsWith('/${store.repo.teamId}')) url = '$base/${store.repo.teamId}';
+    setState(() {
+      _busy = true;
+      _status = null;
+    });
+    try {
+      final msg = await ZaloBotService(store.settings.zaloBotToken).setWebhook(url, secret);
+      await store.repo.updateSettings({
+        'zaloWebhookUrl': url,
+        'zaloWebhookSecret': secret,
+      });
+      _webhookUrl.text = url;
+      setState(() => _status = 'Webhook: $msg');
+    } catch (e) {
+      setState(() => _status = '❌ $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _disableWebhook() async {
+    final store = TeamScope.of(context);
+    setState(() => _busy = true);
+    try {
+      await ZaloBotService(store.settings.zaloBotToken).deleteWebhook();
+      await store.repo.updateSettings({'zaloWebhookUrl': ''});
+      setState(() => _status = 'Đã tắt webhook, app quay lại tự hỏi Zalo (getUpdates).');
+    } catch (e) {
+      setState(() => _status = '❌ $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// Lắng nghe tin mới trong ~25 giây để tìm chat id của nhóm.
   Future<void> _listen() async {
     final store = TeamScope.of(context);
@@ -67,6 +136,16 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
       _status = 'Đang lắng nghe 25 giây... Hãy vào nhóm Zalo, gõ @${store.settings.zaloBotName} và gửi.';
     });
     try {
+      if (store.settings.zaloWebhookMode) {
+        // Webhook đang bật: tin về qua Firestore, chỉ cần đợi rồi đọc zaloChats.
+        await Future.delayed(const Duration(seconds: 25));
+        if (!mounted) return;
+        final n = TeamScope.of(context).settings.zaloChats.length;
+        setState(() => _status = n == 0
+            ? 'Chưa thấy tin nào qua webhook. Kiểm tra Worker (Logs) và bot đã trong nhóm chưa.'
+            : 'Đã có $n chat. Chọn nhóm bên dưới.');
+        return;
+      }
       final updates = await ZaloBotService(token).getUpdates(timeoutSeconds: 25);
       setState(() {
         for (final u in updates) {
@@ -135,8 +214,21 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     final store = TeamScope.of(context);
     final s = store.settings;
     final linked = store.players.where((p) => p.zaloId.isNotEmpty).toList();
-    final groups = _seen.where((u) => u.isGroup).toList();
-    final privates = _seen.where((u) => !u.isGroup).toList();
+    // Gộp chat phát hiện trong phiên này với chat đã lưu trên Firestore.
+    final chatMap = <String, ZaloChat>{...s.zaloChats};
+    for (final u in _seen) {
+      chatMap[u.chatId] = ZaloChat(
+        chatId: u.chatId,
+        isGroup: u.isGroup,
+        lastFromName: u.fromName,
+        lastText: u.text,
+        lastDate: u.date,
+      );
+    }
+    final chats = chatMap.values.toList()
+      ..sort((a, b) => b.lastDate.compareTo(a.lastDate));
+    final groups = chats.where((c) => c.isGroup).toList();
+    final privates = chats.where((c) => !c.isGroup).toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Zalo Bot')),
@@ -231,27 +323,80 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
           if (groups.isNotEmpty) ...[
             const SizedBox(height: 8),
             const Text('Nhóm phát hiện được (bấm để chọn):'),
-            for (final u in groups)
+            for (final c in groups)
               Card(
                 margin: const EdgeInsets.symmetric(vertical: 4),
                 child: ListTile(
-                  leading: const Icon(Icons.group),
-                  title: Text('Nhóm · tin từ ${u.fromName}'),
-                  subtitle: Text('${u.text}\nchat_id: ${u.chatId}'),
+                  leading: Icon(Icons.group,
+                      color: c.chatId == s.zaloGroupId ? Theme.of(context).colorScheme.primary : null),
+                  title: Text('Nhóm · tin gần nhất từ ${c.lastFromName}'),
+                  subtitle: Text('${c.lastText}\nchat_id: ${c.chatId}'),
                   isThreeLine: true,
-                  selected: u.chatId == s.zaloGroupId,
+                  selected: c.chatId == s.zaloGroupId,
+                  trailing: c.chatId == s.zaloGroupId ? const Icon(Icons.check_circle) : null,
                   onTap: () => store.repo.updateSettings({
-                    'zaloGroupId': u.chatId,
-                    'zaloGroupName': 'Nhóm Zalo (${u.fromName} đã @bot)',
+                    'zaloGroupId': c.chatId,
+                    'zaloGroupName': 'Nhóm Zalo (${c.lastFromName} đã @bot)',
                   }),
                 ),
               ),
           ],
           if (privates.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text('Tin nhắn riêng: ${privates.map((u) => '${u.fromName}: "${u.text}"').join(' · ')}',
+            Text(
+                'Tin nhắn riêng: ${privates.map((c) => '${c.lastFromName}: "${c.lastText}"').join(' · ')}',
                 style: Theme.of(context).textTheme.bodySmall),
           ],
+          const Divider(height: 32),
+          Text('Webhook (Cloudflare Worker) – nhận vote mọi lúc',
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            s.zaloWebhookMode
+                ? '✅ Đang bật. Zalo đẩy tin về Worker → Firestore, app tự xử lý khi mở. '
+                    'Chế độ tự hỏi Zalo (getUpdates) bị tắt.'
+                : 'Chưa bật. Hiện app chỉ nhận vote khi đang mở tab Vote. '
+                    'Xem hướng dẫn tạo Worker trong thư mục worker/ của dự án.',
+            style: const TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _webhookUrl,
+            decoration: InputDecoration(
+              labelText: 'URL Worker',
+              hintText: 'https://pickleball-zalo-webhook.<ten>.workers.dev',
+              helperText: 'App tự thêm /${store.repo.teamId} vào cuối',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _webhookSecret,
+            decoration: InputDecoration(
+              labelText: 'Secret (ZALO_SECRET trên Cloudflare)',
+              suffixIcon: IconButton(
+                tooltip: 'Tạo chuỗi mới',
+                icon: const Icon(Icons.casino_outlined),
+                onPressed: () => setState(() => _webhookSecret.text = _randomSecret()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: (_busy || !s.hasZaloBot) ? null : _enableWebhook,
+                icon: const Icon(Icons.cloud_upload_outlined),
+                label: Text(s.zaloWebhookMode ? 'Cập nhật webhook' : 'Bật webhook'),
+              ),
+              if (s.zaloWebhookMode)
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _disableWebhook,
+                  icon: const Icon(Icons.cloud_off_outlined),
+                  label: const Text('Tắt webhook'),
+                ),
+            ],
+          ),
           const Divider(height: 32),
           Text('Người chơi đã liên kết Zalo (${linked.length})',
               style: Theme.of(context).textTheme.titleMedium),

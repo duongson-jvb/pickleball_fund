@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Cloudflare wrangler
+worker/.wrangler/
+worker/node_modules/

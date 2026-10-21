@@ -25,6 +25,9 @@ class TeamSettings {
   final String zaloBotName;
   final String zaloGroupId; // chat_id của nhóm Zalo đã chọn
   final String zaloGroupName;
+  final String zaloWebhookUrl; // URL Cloudflare Worker (rỗng = dùng getUpdates)
+  final String zaloWebhookSecret;
+  final Map<String, ZaloChat> zaloChats; // các chat bot từng nhận tin
 
   const TeamSettings({
     required this.id,
@@ -36,12 +39,20 @@ class TeamSettings {
     this.zaloBotName = '',
     this.zaloGroupId = '',
     this.zaloGroupName = '',
+    this.zaloWebhookUrl = '',
+    this.zaloWebhookSecret = '',
+    this.zaloChats = const {},
   });
 
   bool get hasZaloBot => zaloBotToken.isNotEmpty;
+  bool get zaloWebhookMode => zaloWebhookUrl.isNotEmpty;
 
   factory TeamSettings.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data() ?? {};
+    final chats = <String, ZaloChat>{};
+    ((d['zaloChats'] as Map?) ?? {}).forEach((k, v) {
+      if (v is Map) chats[k.toString()] = ZaloChat.fromMap(Map<String, dynamic>.from(v));
+    });
     return TeamSettings(
       id: doc.id,
       name: (d['name'] as String?) ?? 'Team Pickleball',
@@ -52,8 +63,44 @@ class TeamSettings {
       zaloBotName: (d['zaloBotName'] as String?) ?? '',
       zaloGroupId: (d['zaloGroupId'] as String?) ?? '',
       zaloGroupName: (d['zaloGroupName'] as String?) ?? '',
+      zaloWebhookUrl: (d['zaloWebhookUrl'] as String?) ?? '',
+      zaloWebhookSecret: (d['zaloWebhookSecret'] as String?) ?? '',
+      zaloChats: chats,
     );
   }
+}
+
+/// Một cuộc trò chuyện (nhóm / riêng) mà bot đã nhận tin, để chọn nhóm nhận vote.
+class ZaloChat {
+  final String chatId;
+  final bool isGroup;
+  final String lastFromName;
+  final String lastText;
+  final DateTime lastDate;
+
+  const ZaloChat({
+    required this.chatId,
+    required this.isGroup,
+    required this.lastFromName,
+    required this.lastText,
+    required this.lastDate,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'chatId': chatId,
+        'isGroup': isGroup,
+        'lastFromName': lastFromName,
+        'lastText': lastText,
+        'lastDate': Timestamp.fromDate(lastDate),
+      };
+
+  factory ZaloChat.fromMap(Map<String, dynamic> m) => ZaloChat(
+        chatId: (m['chatId'] as String?) ?? '',
+        isGroup: m['isGroup'] == true,
+        lastFromName: (m['lastFromName'] as String?) ?? '',
+        lastText: (m['lastText'] as String?) ?? '',
+        lastDate: _toDate(m['lastDate']),
+      );
 }
 
 /// Người chơi trong nhóm.
