@@ -209,6 +209,11 @@ class TeamRepository {
     return ref.id;
   }
 
+  /// Cập nhật một vài trường của buổi chơi mà không tính lại tiền
+  /// (dùng cho vote, tin Zalo đang chờ...).
+  Future<void> updateSessionFields(String id, Map<String, dynamic> data) =>
+      sessions.doc(id).update(data);
+
   Future<void> deleteSession(String id) async {
     final batch = _db.batch();
     final entries = await ledger.where('refId', isEqualTo: id).get();

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../models/models.dart';
 import '../../services/share_service.dart';
 import '../../services/team_store.dart';
+import '../../services/zalo_bot_service.dart';
+import '../../services/zalo_vote_sync.dart';
 import '../../utils/format.dart';
 import '../../widgets/common.dart';
 import '../share/share_screen.dart';
@@ -125,11 +127,167 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 }
 
 // ============================================================== VOTE TAB
-class _VoteTab extends StatelessWidget {
+class _VoteTab extends StatefulWidget {
   const _VoteTab({required this.session, required this.onSave, required this.onClosed});
   final Session session;
   final Future<void> Function(Session) onSave;
   final VoidCallback onClosed;
+
+  @override
+  State<_VoteTab> createState() => _VoteTabState();
+}
+
+class _VoteTabState extends State<_VoteTab> {
+  Session get session => widget.session;
+  Future<void> Function(Session) get onSave => widget.onSave;
+
+  bool _polling = false;
+  bool _disposed = false;
+  bool _botBusy = false;
+  String? _botStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPolling());
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  /// Vòng lặp hỏi Zalo liên tục (long polling) khi đang ở tab Vote.
+  Future<void> _startPolling() async {
+    if (_polling || _disposed) return;
+    final store = TeamScope.of(context);
+    if (!store.settings.hasZaloBot || session.status != SessionStatus.voting) return;
+    _polling = true;
+    setState(() => _botStatus = 'Đang chờ vote từ Zalo...');
+    while (!_disposed) {
+      try {
+        if (!mounted) break;
+        final s = TeamScope.of(context).settings;
+        if (!s.hasZaloBot) break;
+        final updates = await ZaloBotService(s.zaloBotToken).getUpdates(timeoutSeconds: 15);
+        if (_disposed) break;
+        if (updates.isNotEmpty) await _applyUpdates(updates);
+      } catch (e) {
+        if (_disposed) break;
+        setState(() => _botStatus = 'Lỗi kết nối bot: $e');
+        await Future.delayed(const Duration(seconds: 10));
+      }
+    }
+    _polling = false;
+  }
+
+  Future<void> _applyUpdates(List<ZaloUpdate> updates) async {
+    final store = TeamScope.of(context);
+    final current = store.sessions.where((x) => x.id == session.id).firstOrNull ?? session;
+    final r = await ZaloVoteSync.apply(store, updates, target: current);
+    if (!mounted) return;
+    final parts = <String>[];
+    if (r.appliedNames.isNotEmpty) parts.add('Đã nhận vote: ${r.appliedNames.join(', ')}');
+    if (r.pendingCount > 0) parts.add('${r.pendingCount} tin chưa khớp tên');
+    if (parts.isNotEmpty) {
+      setState(() => _botStatus = '${parts.join(' · ')} (${TimeOfDay.now().format(context)})');
+      showSnack(context, parts.join(' · '));
+    }
+  }
+
+  Future<void> _syncNow() async {
+    final store = TeamScope.of(context);
+    setState(() => _botBusy = true);
+    try {
+      final updates =
+          await ZaloBotService(store.settings.zaloBotToken).getUpdates(timeoutSeconds: 3);
+      if (updates.isEmpty) {
+        if (mounted) showSnack(context, 'Không có tin mới từ Zalo');
+      } else {
+        await _applyUpdates(updates);
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, 'Lỗi: $e');
+    } finally {
+      if (mounted) setState(() => _botBusy = false);
+    }
+  }
+
+  Future<void> _sendVoteViaBot() async {
+    final store = TeamScope.of(context);
+    final s = store.settings;
+    if (s.zaloGroupId.isEmpty) {
+      showSnack(context, 'Chưa chọn nhóm Zalo. Vào Cài đặt → Zalo Bot.');
+      return;
+    }
+    setState(() => _botBusy = true);
+    try {
+      final text = '${ShareService.voteText(store, session)}\n'
+          '👉 REPLY tin này: 1 = đi, 0 = không đi (bot sẽ tự ghi nhận).';
+      final id = await ZaloBotService(s.zaloBotToken).sendMessage(s.zaloGroupId, text);
+      await store.repo.updateSessionFields(session.id, {'zaloVoteMessageId': id});
+      if (mounted) showSnack(context, 'Đã gửi vote lên nhóm Zalo');
+      _startPolling();
+    } catch (e) {
+      if (mounted) showSnack(context, 'Lỗi gửi: $e');
+    } finally {
+      if (mounted) setState(() => _botBusy = false);
+    }
+  }
+
+  Future<void> _sendListViaBot() async {
+    final store = TeamScope.of(context);
+    final s = store.settings;
+    if (s.zaloGroupId.isEmpty) {
+      showSnack(context, 'Chưa chọn nhóm Zalo. Vào Cài đặt → Zalo Bot.');
+      return;
+    }
+    setState(() => _botBusy = true);
+    try {
+      await ZaloBotService(s.zaloBotToken)
+          .sendMessage(s.zaloGroupId, ShareService.voteText(store, session));
+      if (mounted) showSnack(context, 'Đã gửi danh sách lên nhóm Zalo');
+    } catch (e) {
+      if (mounted) showSnack(context, 'Lỗi gửi: $e');
+    } finally {
+      if (mounted) setState(() => _botBusy = false);
+    }
+  }
+
+  Future<void> _assignPending(ZaloPendingVote p) async {
+    final store = TeamScope.of(context);
+    final player = await showDialog<Player>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('"${p.name}" là ai?'),
+        children: [
+          for (final pl in store.activePlayers)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, pl),
+              child: Text(pl.name),
+            ),
+        ],
+      ),
+    );
+    if (player == null || !mounted) return;
+    bool? vote = p.vote;
+    if (vote == null) {
+      vote = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('${player.name} nhắn "${p.text}"'),
+          content: const Text('Tính là đi hay không đi?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Không đi')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Đi')),
+          ],
+        ),
+      );
+      if (vote == null) return;
+    }
+    await ZaloVoteSync.resolvePending(store, session, p, player, voteOverride: vote);
+  }
 
   Future<void> _importFromZalo(BuildContext context) async {
     final store = TeamScope.of(context);
@@ -194,7 +352,7 @@ class _VoteTab extends StatelessWidget {
       if (!playerIds.contains(id)) playerIds.add(id);
     }
     await onSave(session.copyWith(status: SessionStatus.closed, playerIds: playerIds));
-    onClosed();
+    widget.onClosed();
   }
 
   @override
@@ -203,6 +361,7 @@ class _VoteTab extends StatelessWidget {
     final s = session;
     final voting = s.status == SessionStatus.voting;
     final players = store.activePlayers;
+    final hasBot = store.settings.hasZaloBot;
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
@@ -237,7 +396,7 @@ class _VoteTab extends StatelessWidget {
                     OutlinedButton.icon(
                       onPressed: () => _importFromZalo(context),
                       icon: const Icon(Icons.download),
-                      label: const Text('Nhập kết quả từ Zalo'),
+                      label: const Text('Dán kết quả từ Zalo'),
                     ),
                     if (voting)
                       FilledButton.icon(
@@ -251,6 +410,91 @@ class _VoteTab extends StatelessWidget {
             ),
           ),
         ),
+        if (hasBot)
+          Card(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.smart_toy_outlined, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('Zalo Bot: ${store.settings.zaloBotName}',
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      if (_botBusy)
+                        const SizedBox(
+                            width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    ],
+                  ),
+                  if (_botStatus != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(_botStatus!, style: const TextStyle(fontSize: 12)),
+                    ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      if (voting)
+                        FilledButton.icon(
+                          onPressed: _botBusy ? null : _sendVoteViaBot,
+                          icon: const Icon(Icons.send),
+                          label: Text(s.zaloVoteMessageId.isEmpty
+                              ? 'Gửi vote qua bot'
+                              : 'Gửi lại vote qua bot'),
+                        ),
+                      if (!voting)
+                        FilledButton.tonalIcon(
+                          onPressed: _botBusy ? null : _sendListViaBot,
+                          icon: const Icon(Icons.send),
+                          label: const Text('Gửi danh sách qua bot'),
+                        ),
+                      OutlinedButton.icon(
+                        onPressed: _botBusy ? null : _syncNow,
+                        icon: const Icon(Icons.sync),
+                        label: const Text('Đồng bộ ngay'),
+                      ),
+                    ],
+                  ),
+                  if (s.zaloPending.isNotEmpty) ...[
+                    const Divider(),
+                    const Text('Tin chưa khớp được tên (bấm Gán để chọn người):',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    for (final p in s.zaloPending)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          p.vote == null
+                              ? Icons.help_outline
+                              : (p.vote! ? Icons.thumb_up_alt_outlined : Icons.thumb_down_alt_outlined),
+                          size: 20,
+                        ),
+                        title: Text(p.name.isEmpty ? '(không tên)' : p.name),
+                        subtitle: Text('"${p.text}"', maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                                onPressed: () => _assignPending(p), child: const Text('Gán')),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () => ZaloVoteSync.dismissPending(store, s, p),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Text('Bấm vào tên để đánh dấu đi / không đi',

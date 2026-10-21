@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../models/models.dart';
 import '../utils/format.dart';
+import '../utils/text.dart';
 import 'image_util.dart';
 import 'team_store.dart';
 
@@ -136,10 +137,10 @@ class ShareService {
   /// Phân tích kết quả vote copy từ Zalo: tìm tên người chơi xuất hiện
   /// trong văn bản. Trả về danh sách playerId khớp.
   static List<String> parseZaloVote(TeamStore store, String text) {
-    final normalizedText = _normalize(text);
+    final normalizedText = normalizeVi(text);
     final matched = <String>[];
     for (final p in store.activePlayers) {
-      final name = _normalize(p.name);
+      final name = normalizeVi(p.name);
       if (name.isEmpty) continue;
       if (normalizedText.contains(name)) {
         matched.add(p.id);
@@ -155,17 +156,5 @@ class ShareService {
       }
     }
     return matched;
-  }
-
-  static String _normalize(String s) {
-    const withDiacritics =
-        'àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ';
-    const without =
-        'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd';
-    var out = s.toLowerCase();
-    for (var i = 0; i < withDiacritics.length; i++) {
-      out = out.replaceAll(withDiacritics[i], without[i]);
-    }
-    return out;
   }
 }
