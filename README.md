@@ -75,6 +75,10 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
 Giới hạn của Zalo Bot API: bot chỉ thấy tin **reply** hoặc **@mention** bot, không sửa/xoá tin, không có nút bấm,
 tính năng bot trong nhóm đang ở giai đoạn thử nghiệm. Token lưu trong tài liệu nhóm trên Firestore (ai có mã nhóm đều đọc được).
 
+**Nhận vote mọi lúc (webhook, miễn phí)**: deploy Cloudflare Worker trong thư mục [`worker/`](worker/README.md),
+rồi App → Cài đặt → Zalo Bot → mục *Webhook* → dán URL Worker + secret → *Bật webhook*.
+Zalo đẩy tin về Worker → Firestore `teams/{teamId}/zaloInbox` → app tự biến thành vote ngay khi mở.
+
 ### Cách 2: thủ công
 - **Tạo vote**: sinh sẵn nội dung vote → chia sẻ sang Zalo.
 - **Dán kết quả**: copy danh sách người đã vote trên Zalo → dán vào app → app khớp tên (không dấu, không phân biệt hoa thường).

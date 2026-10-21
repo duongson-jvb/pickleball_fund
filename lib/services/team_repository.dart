@@ -22,6 +22,21 @@ class TeamRepository {
       teamDoc.collection('sessions');
   CollectionReference<Map<String, dynamic>> get expenses =>
       teamDoc.collection('expenses');
+  /// Hộp thư tin Zalo do Cloudflare Worker (webhook) ghi vào.
+  CollectionReference<Map<String, dynamic>> get zaloInbox =>
+      teamDoc.collection('zaloInbox');
+
+  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> watchZaloInbox() =>
+      zaloInbox.orderBy('date').limit(200).snapshots().map((s) => s.docs);
+
+  Future<void> deleteZaloInbox(Iterable<String> ids) async {
+    if (ids.isEmpty) return;
+    final batch = _db.batch();
+    for (final id in ids) {
+      batch.delete(zaloInbox.doc(id));
+    }
+    await batch.commit();
+  }
 
   // ---------------------------------------------------------------- streams
   Stream<TeamSettings> watchSettings() =>

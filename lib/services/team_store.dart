@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart';
 
 import '../models/models.dart';
 import 'team_repository.dart';
+import 'zalo_bot_service.dart';
+import 'zalo_vote_sync.dart';
 
 /// Giữ toàn bộ dữ liệu realtime của nhóm và các giá trị tính toán
 /// (số dư từng người, quỹ chung, người sắp hết tiền...).
@@ -34,13 +37,56 @@ class TeamStore extends ChangeNotifier {
         sessions = v;
         _loaded.add('sessions');
         notifyListeners();
+        _processInbox();
       }, onError: _onError),
       repo.watchExpenses().listen((v) {
         expenses = v;
         _loaded.add('expenses');
         notifyListeners();
       }, onError: _onError),
+      // Hộp thư Zalo do webhook (Cloudflare Worker) ghi vào: xử lý ngay khi có.
+      repo.watchZaloInbox().listen((docs) {
+        _pendingInbox = docs;
+        _processInbox();
+      }, onError: (_) {}),
     ];
+  }
+
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _pendingInbox = [];
+  bool _processingInbox = false;
+  String? lastZaloInboxSummary;
+
+  /// Biến các tin trong zaloInbox thành vote rồi xoá khỏi hộp thư.
+  Future<void> _processInbox() async {
+    if (_processingInbox || _pendingInbox.isEmpty) return;
+    // Cần đủ dữ liệu (người chơi, buổi chơi) mới khớp được.
+    if (!_loaded.contains('players') || !_loaded.contains('sessions') ||
+        !_loaded.contains('settings')) {
+      return;
+    }
+    _processingInbox = true;
+    try {
+      final docs = _pendingInbox;
+      _pendingInbox = [];
+      final updates = <ZaloUpdate>[];
+      for (final d in docs) {
+        final u = ZaloUpdate.fromInboxDoc(d.id, d.data());
+        if (u != null) updates.add(u);
+      }
+      if (updates.isNotEmpty) {
+        final r = await ZaloVoteSync.apply(this, updates);
+        if (r.appliedNames.isNotEmpty) {
+          lastZaloInboxSummary = 'Đã nhận vote từ Zalo: ${r.appliedNames.join(', ')}';
+        }
+      }
+      await repo.deleteZaloInbox(docs.map((d) => d.id));
+      notifyListeners();
+    } catch (_) {
+      // Lỗi mạng: tin vẫn còn trong hộp thư, lần sau xử lý lại.
+    } finally {
+      _processingInbox = false;
+      if (_pendingInbox.isNotEmpty) _processInbox();
+    }
   }
 
   final TeamRepository repo;
