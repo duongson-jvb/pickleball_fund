@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
@@ -9,6 +11,12 @@ import '../../utils/format.dart';
 import '../../widgets/common.dart';
 import '../share/share_screen.dart';
 import 'session_form_screen.dart';
+
+/// Hàm biến đổi buổi chơi: nhận bản MỚI NHẤT, trả về bản đã sửa.
+/// Dùng updater thay vì truyền thẳng Session để các thao tác liên tiếp
+/// (bấm +1 nước nhiều lần, vote về từ Zalo cùng lúc...) không ghi đè nhau.
+typedef SessionUpdater = Session Function(Session latest);
+typedef MutateFn = Future<void> Function(SessionUpdater update);
 
 /// Chi tiết buổi chơi: Vote → Người chơi & tiền sân → Nước → Tổng kết.
 class SessionDetailScreen extends StatefulWidget {
@@ -23,6 +31,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   bool _busy = false;
+
+  // Hàng đợi lưu: mỗi thao tác chạy tuần tự, dựa trên kết quả thao tác trước.
+  Future<void> _queue = Future.value();
+  Session? _optimistic;
+  int _pendingOps = 0;
 
   @override
   void initState() {
@@ -39,20 +52,35 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   Session? _session(TeamStore store) =>
       store.sessions.where((s) => s.id == widget.sessionId).firstOrNull;
 
-  /// Lưu buổi chơi và tính lại toàn bộ tiền.
-  Future<void> _save(Session s) async {
-    final store = TeamScope.of(context);
-    setState(() => _busy = true);
-    try {
-      await store.repo.saveAndSettleSession(
-        s,
-        commonFundExcludingThis: store.commonFundExcluding(s.id),
-      );
-    } catch (e) {
-      if (mounted) showSnack(context, 'Lỗi: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  /// Áp dụng [update] lên bản mới nhất rồi lưu + tính lại tiền.
+  Future<void> _mutate(SessionUpdater update) {
+    _pendingOps++;
+    if (mounted) setState(() => _busy = true);
+    final done = Completer<void>();
+    _queue = _queue.then((_) async {
+      try {
+        if (!mounted) return;
+        final store = TeamScope.of(context);
+        final base = _optimistic ?? _session(store);
+        if (base == null) return;
+        final next = update(base);
+        _optimistic = next;
+        await store.repo.saveAndSettleSession(
+          next,
+          commonFundExcludingThis: store.commonFundExcluding(next.id),
+        );
+      } catch (e) {
+        if (mounted) showSnack(context, 'Lỗi lưu: $e');
+      } finally {
+        _pendingOps--;
+        if (_pendingOps == 0) {
+          _optimistic = null;
+          if (mounted) setState(() => _busy = false);
+        }
+        done.complete();
+      }
+    });
+    return done.future;
   }
 
   @override
@@ -96,7 +124,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 Navigator.push(context,
                     MaterialPageRoute(builder: (_) => SessionFormScreen(session: s)));
               } else if (v == 'reopen') {
-                await _save(s.copyWith(status: SessionStatus.voting));
+                await _mutate((l) => l.copyWith(status: SessionStatus.voting));
               } else if (v == 'delete') {
                 if (await confirm(context, 'Xoá buổi chơi này?',
                     message: 'Tiền sân, tiền nước đã trừ sẽ được hoàn lại.')) {
@@ -116,9 +144,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       body: TabBarView(
         controller: _tabs,
         children: [
-          _VoteTab(session: s, onSave: _save, onClosed: () => _tabs.animateTo(1)),
-          _PlayersTab(session: s, onSave: _save),
-          _DrinksTab(session: s, onSave: _save),
+          _VoteTab(session: s, onMutate: _mutate, onClosed: () => _tabs.animateTo(1)),
+          _PlayersTab(session: s, onMutate: _mutate),
+          _DrinksTab(session: s, onMutate: _mutate),
           _SummaryTab(session: s),
         ],
       ),
@@ -128,9 +156,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
 // ============================================================== VOTE TAB
 class _VoteTab extends StatefulWidget {
-  const _VoteTab({required this.session, required this.onSave, required this.onClosed});
+  const _VoteTab({required this.session, required this.onMutate, required this.onClosed});
   final Session session;
-  final Future<void> Function(Session) onSave;
+  final MutateFn onMutate;
   final VoidCallback onClosed;
 
   @override
@@ -139,7 +167,7 @@ class _VoteTab extends StatefulWidget {
 
 class _VoteTabState extends State<_VoteTab> {
   Session get session => widget.session;
-  Future<void> Function(Session) get onSave => widget.onSave;
+  MutateFn get onMutate => widget.onMutate;
 
   bool _polling = false;
   bool _disposed = false;
@@ -158,9 +186,11 @@ class _VoteTabState extends State<_VoteTab> {
     super.dispose();
   }
 
+  ZaloBotService _bot(TeamStore store) => ZaloBotService.forTeam(store.settings, store.repo.teamId);
+
   /// Vòng lặp hỏi Zalo liên tục (long polling) khi đang ở tab Vote.
   Future<void> _startPolling() async {
-    if (_polling || _disposed) return;
+    if (_polling || _disposed || !mounted) return;
     final store = TeamScope.of(context);
     if (!store.settings.hasZaloBot || session.status != SessionStatus.voting) return;
     if (store.settings.zaloWebhookMode) {
@@ -173,13 +203,18 @@ class _VoteTabState extends State<_VoteTab> {
     while (!_disposed) {
       try {
         if (!mounted) break;
-        final s = TeamScope.of(context).settings;
-        if (!s.hasZaloBot) break;
-        final updates = await ZaloBotService(s.zaloBotToken).getUpdates(timeoutSeconds: 15);
+        final st = TeamScope.of(context);
+        final s = st.settings;
+        final current = st.sessions.where((x) => x.id == session.id).firstOrNull;
+        if (!s.hasZaloBot || s.zaloWebhookMode || current == null ||
+            current.status != SessionStatus.voting) {
+          break;
+        }
+        final updates = await _bot(st).getUpdates(timeoutSeconds: 15);
         if (_disposed) break;
         if (updates.isNotEmpty) await _applyUpdates(updates);
       } catch (e) {
-        if (_disposed) break;
+        if (_disposed || !mounted) break;
         setState(() => _botStatus = 'Lỗi kết nối bot: $e');
         await Future.delayed(const Duration(seconds: 10));
       }
@@ -188,6 +223,7 @@ class _VoteTabState extends State<_VoteTab> {
   }
 
   Future<void> _applyUpdates(List<ZaloUpdate> updates) async {
+    if (!mounted) return;
     final store = TeamScope.of(context);
     final current = store.sessions.where((x) => x.id == session.id).firstOrNull ?? session;
     final r = await ZaloVoteSync.apply(store, updates, target: current);
@@ -210,8 +246,7 @@ class _VoteTabState extends State<_VoteTab> {
     }
     setState(() => _botBusy = true);
     try {
-      final updates =
-          await ZaloBotService(store.settings.zaloBotToken).getUpdates(timeoutSeconds: 3);
+      final updates = await _bot(store).getUpdates(timeoutSeconds: 3);
       if (updates.isEmpty) {
         if (mounted) showSnack(context, 'Không có tin mới từ Zalo');
       } else {
@@ -224,7 +259,7 @@ class _VoteTabState extends State<_VoteTab> {
     }
   }
 
-  Future<void> _sendVoteViaBot() async {
+  Future<void> _sendViaBot({required bool asVote}) async {
     final store = TeamScope.of(context);
     final s = store.settings;
     if (s.zaloGroupId.isEmpty) {
@@ -233,31 +268,16 @@ class _VoteTabState extends State<_VoteTab> {
     }
     setState(() => _botBusy = true);
     try {
-      final text = '${ShareService.voteText(store, session)}\n'
-          '👉 REPLY tin này: 1 = đi, 0 = không đi (bot sẽ tự ghi nhận).';
-      final id = await ZaloBotService(s.zaloBotToken).sendMessage(s.zaloGroupId, text);
-      await store.repo.updateSessionFields(session.id, {'zaloVoteMessageId': id});
-      if (mounted) showSnack(context, 'Đã gửi vote lên nhóm Zalo');
-      _startPolling();
-    } catch (e) {
-      if (mounted) showSnack(context, 'Lỗi gửi: $e');
-    } finally {
-      if (mounted) setState(() => _botBusy = false);
-    }
-  }
-
-  Future<void> _sendListViaBot() async {
-    final store = TeamScope.of(context);
-    final s = store.settings;
-    if (s.zaloGroupId.isEmpty) {
-      showSnack(context, 'Chưa chọn nhóm Zalo. Vào Cài đặt → Zalo Bot.');
-      return;
-    }
-    setState(() => _botBusy = true);
-    try {
-      await ZaloBotService(s.zaloBotToken)
-          .sendMessage(s.zaloGroupId, ShareService.voteText(store, session));
-      if (mounted) showSnack(context, 'Đã gửi danh sách lên nhóm Zalo');
+      var text = ShareService.voteText(store, session);
+      if (asVote) text += '\n👉 REPLY tin này: 1 = đi, 0 = không đi (bot sẽ tự ghi nhận).';
+      final id = await _bot(store).sendMessage(s.zaloGroupId, text);
+      if (asVote) {
+        await store.repo.updateSessionFields(session.id, {'zaloVoteMessageId': id});
+      }
+      if (mounted) {
+        showSnack(context, asVote ? 'Đã gửi vote lên nhóm Zalo' : 'Đã gửi danh sách lên nhóm Zalo');
+      }
+      if (asVote) _startPolling();
     } catch (e) {
       if (mounted) showSnack(context, 'Lỗi gửi: $e');
     } finally {
@@ -296,7 +316,9 @@ class _VoteTabState extends State<_VoteTab> {
       );
       if (vote == null) return;
     }
-    await ZaloVoteSync.resolvePending(store, session, p, player, voteOverride: vote);
+    if (!mounted) return;
+    final latest = TeamScope.of(context).sessions.where((x) => x.id == session.id).firstOrNull;
+    await ZaloVoteSync.resolvePending(store, latest ?? session, p, player, voteOverride: vote);
   }
 
   Future<void> _importFromZalo(BuildContext context) async {
@@ -335,11 +357,13 @@ class _VoteTabState extends State<_VoteTab> {
       if (context.mounted) showSnack(context, 'Không khớp được tên nào');
       return;
     }
-    final votes = {...session.votes};
-    for (final id in matched) {
-      votes[id] = true;
-    }
-    await onSave(session.copyWith(votes: votes));
+    await onMutate((l) {
+      final votes = {...l.votes};
+      for (final id in matched) {
+        votes[id] = true;
+      }
+      return l.copyWith(votes: votes);
+    });
     if (context.mounted) {
       showSnack(context, 'Đã đánh dấu ${matched.length} người: '
           '${matched.map(store.playerName).join(', ')}');
@@ -357,11 +381,13 @@ class _VoteTabState extends State<_VoteTab> {
       danger: false,
     );
     if (!ok) return;
-    final playerIds = [...session.playerIds];
-    for (final id in yes) {
-      if (!playerIds.contains(id)) playerIds.add(id);
-    }
-    await onSave(session.copyWith(status: SessionStatus.closed, playerIds: playerIds));
+    await onMutate((l) {
+      final playerIds = [...l.playerIds];
+      for (final id in l.votedYes) {
+        if (!playerIds.contains(id)) playerIds.add(id);
+      }
+      return l.copyWith(status: SessionStatus.closed, playerIds: playerIds);
+    });
     widget.onClosed();
   }
 
@@ -453,7 +479,7 @@ class _VoteTabState extends State<_VoteTab> {
                     children: [
                       if (voting)
                         FilledButton.icon(
-                          onPressed: _botBusy ? null : _sendVoteViaBot,
+                          onPressed: _botBusy ? null : () => _sendViaBot(asVote: true),
                           icon: const Icon(Icons.send),
                           label: Text(s.zaloVoteMessageId.isEmpty
                               ? 'Gửi vote qua bot'
@@ -461,7 +487,7 @@ class _VoteTabState extends State<_VoteTab> {
                         ),
                       if (!voting)
                         FilledButton.tonalIcon(
-                          onPressed: _botBusy ? null : _sendListViaBot,
+                          onPressed: _botBusy ? null : () => _sendViaBot(asVote: false),
                           icon: const Icon(Icons.send),
                           label: const Text('Gửi danh sách qua bot'),
                         ),
@@ -519,10 +545,7 @@ class _VoteTabState extends State<_VoteTab> {
                 : const Text('Chưa vote'),
             secondary: CircleAvatar(
                 radius: 16, child: Text(p.name.isEmpty ? '?' : p.name[0].toUpperCase())),
-            onChanged: (v) {
-              final votes = {...s.votes, p.id: v ?? false};
-              onSave(s.copyWith(votes: votes));
-            },
+            onChanged: (v) => onMutate((l) => l.copyWith(votes: {...l.votes, p.id: v ?? false})),
           ),
       ],
     );
@@ -531,9 +554,9 @@ class _VoteTabState extends State<_VoteTab> {
 
 // =========================================================== PLAYERS TAB
 class _PlayersTab extends StatelessWidget {
-  const _PlayersTab({required this.session, required this.onSave});
+  const _PlayersTab({required this.session, required this.onMutate});
   final Session session;
-  final Future<void> Function(Session) onSave;
+  final MutateFn onMutate;
 
   Future<void> _editGuests(BuildContext context) async {
     final ctrl = TextEditingController(text: session.guestCount.toString());
@@ -558,7 +581,8 @@ class _PlayersTab extends StatelessWidget {
       ),
     );
     if (ok == true) {
-      await onSave(session.copyWith(guestCount: int.tryParse(ctrl.text.trim()) ?? 0));
+      final n = (int.tryParse(ctrl.text.trim()) ?? 0).clamp(0, 999);
+      await onMutate((l) => l.copyWith(guestCount: n));
     }
   }
 
@@ -570,6 +594,7 @@ class _PlayersTab extends StatelessWidget {
     final players = store.activePlayers;
     final inList = s.playerIds.toSet();
     final commonAvail = store.commonFundExcluding(s.id);
+    final maxShare = st.courtPerPlayer.values.fold(0, (a, b) => a > b ? a : b);
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
@@ -601,8 +626,7 @@ class _PlayersTab extends StatelessWidget {
                   Text('• Quỹ chung trả: ${vnd(st.commonUsed)} '
                       '(quỹ chung có ${vnd(commonAvail)})'),
                   if (st.guestCash > 0) Text('• Khách trả tiền mặt: ${vnd(st.guestCash)}'),
-                  Text('• Mỗi người chơi bị trừ: '
-                      '${st.courtPerPlayer.isEmpty ? '0đ' : vnd(st.courtPerPlayer.values.first)}'),
+                  Text('• Mỗi người chơi bị trừ: ${vnd(maxShare)}'),
                 ],
                 if (s.courtImageBase64 != null) ...[
                   const SizedBox(height: 8),
@@ -628,7 +652,7 @@ class _PlayersTab extends StatelessWidget {
                     style: TextStyle(fontSize: 12)),
               ),
               TextButton(
-                onPressed: () => onSave(s.copyWith(playerIds: s.votedYes)),
+                onPressed: () => onMutate((l) => l.copyWith(playerIds: l.votedYes)),
                 child: const Text('Lấy theo vote'),
               ),
             ],
@@ -648,11 +672,15 @@ class _PlayersTab extends StatelessWidget {
             secondary: s.votes[p.id] == true
                 ? const Tooltip(message: 'Đã vote đi', child: Icon(Icons.how_to_vote, color: Colors.teal))
                 : const Icon(Icons.person_outline),
-            onChanged: (v) {
-              final ids = [...s.playerIds];
-              v == true ? ids.add(p.id) : ids.remove(p.id);
-              onSave(s.copyWith(playerIds: ids));
-            },
+            onChanged: (v) => onMutate((l) {
+              final ids = [...l.playerIds];
+              if (v == true) {
+                if (!ids.contains(p.id)) ids.add(p.id);
+              } else {
+                ids.remove(p.id);
+              }
+              return l.copyWith(playerIds: ids);
+            }),
           ),
       ],
     );
@@ -661,9 +689,9 @@ class _PlayersTab extends StatelessWidget {
 
 // ============================================================ DRINKS TAB
 class _DrinksTab extends StatelessWidget {
-  const _DrinksTab({required this.session, required this.onSave});
+  const _DrinksTab({required this.session, required this.onMutate});
   final Session session;
-  final Future<void> Function(Session) onSave;
+  final MutateFn onMutate;
 
   Future<void> _editPrice(BuildContext context, DrinkType t, int current) async {
     final store = TeamScope.of(context);
@@ -706,22 +734,27 @@ class _DrinksTab extends StatelessWidget {
     if (ok != true) return;
     final price = parseAmount(ctrl.text);
     if (applyGlobally) await store.repo.setDrinkPrice(t, session.date, price);
-    await onSave(session.copyWith(drinkPrices: {...session.drinkPrices, t.id: price}));
+    await onMutate((l) => l.copyWith(drinkPrices: {...l.drinkPrices, t.id: price}));
   }
 
-  void _setQty(String pid, String drinkId, int qty) {
-    final drinks = {
-      for (final e in session.drinks.entries) e.key: {...e.value},
-    };
-    final m = drinks.putIfAbsent(pid, () => {});
-    if (qty <= 0) {
-      m.remove(drinkId);
-    } else {
-      m[drinkId] = qty;
-    }
-    if (m.isEmpty) drinks.remove(pid);
-    onSave(session.copyWith(drinks: drinks));
-  }
+  /// Cộng/trừ số lượng nước, đồng thời "đóng băng" giá của loại nước vào buổi
+  /// nếu chưa có (để sau này đổi giá mặc định không ảnh hưởng buổi đã tính).
+  Future<void> _changeQty(String pid, DrinkType t, int delta, int fallbackPrice) =>
+      onMutate((l) {
+        final drinks = {for (final e in l.drinks.entries) e.key: {...e.value}};
+        final m = drinks.putIfAbsent(pid, () => {});
+        final qty = (m[t.id] ?? 0) + delta;
+        if (qty <= 0) {
+          m.remove(t.id);
+        } else {
+          m[t.id] = qty;
+        }
+        if (m.isEmpty) drinks.remove(pid);
+        final prices = l.drinkPrices.containsKey(t.id)
+            ? l.drinkPrices
+            : {...l.drinkPrices, t.id: fallbackPrice};
+        return l.copyWith(drinks: drinks, drinkPrices: prices);
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -764,6 +797,12 @@ class _DrinksTab extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (s.settlement.totalDrinks > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text('Tổng tiền nước: ${vnd(s.settlement.totalDrinks)}',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
               ],
             ),
           ),
@@ -800,7 +839,7 @@ class _DrinksTab extends StatelessWidget {
                           icon: const Icon(Icons.remove_circle_outline),
                           onPressed: s.drinkQty(pid, t.id) == 0
                               ? null
-                              : () => _setQty(pid, t.id, s.drinkQty(pid, t.id) - 1),
+                              : () => _changeQty(pid, t, -1, priceOf(t)),
                         ),
                         SizedBox(
                           width: 28,
@@ -811,22 +850,7 @@ class _DrinksTab extends StatelessWidget {
                         IconButton(
                           visualDensity: VisualDensity.compact,
                           icon: const Icon(Icons.add_circle_outline),
-                          onPressed: () {
-                            // Đảm bảo giá của loại nước được lưu vào buổi khi bắt đầu dùng.
-                            if (!s.drinkPrices.containsKey(t.id)) {
-                              final drinks = {
-                                for (final e in s.drinks.entries) e.key: {...e.value},
-                              };
-                              final m = drinks.putIfAbsent(pid, () => {});
-                              m[t.id] = (m[t.id] ?? 0) + 1;
-                              onSave(s.copyWith(
-                                drinks: drinks,
-                                drinkPrices: {...s.drinkPrices, t.id: priceOf(t)},
-                              ));
-                            } else {
-                              _setQty(pid, t.id, s.drinkQty(pid, t.id) + 1);
-                            }
-                          },
+                          onPressed: () => _changeQty(pid, t, 1, priceOf(t)),
                         ),
                       ],
                     ),

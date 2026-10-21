@@ -47,13 +47,18 @@ class TeamStore extends ChangeNotifier {
       // Hộp thư Zalo do webhook (Cloudflare Worker) ghi vào: xử lý ngay khi có.
       repo.watchZaloInbox().listen((docs) {
         _pendingInbox = docs;
-        _processInbox();
+        if (_processingInbox) {
+          _inboxDirty = true; // có tin mới trong lúc đang xử lý → xử lý lại sau
+        } else {
+          _processInbox();
+        }
       }, onError: (_) {}),
     ];
   }
 
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _pendingInbox = [];
   bool _processingInbox = false;
+  bool _inboxDirty = false;
   String? lastZaloInboxSummary;
 
   /// Biến các tin trong zaloInbox thành vote rồi xoá khỏi hộp thư.
@@ -67,25 +72,43 @@ class TeamStore extends ChangeNotifier {
     _processingInbox = true;
     try {
       final docs = _pendingInbox;
-      _pendingInbox = [];
       final updates = <ZaloUpdate>[];
+      final idOf = <String, String>{}; // messageId -> docId
       for (final d in docs) {
         final u = ZaloUpdate.fromInboxDoc(d.id, d.data());
-        if (u != null) updates.add(u);
+        if (u != null) {
+          updates.add(u);
+          idOf[u.messageId] = d.id;
+        }
       }
+      final keep = <String>{};
       if (updates.isNotEmpty) {
         final r = await ZaloVoteSync.apply(this, updates);
         if (r.appliedNames.isNotEmpty) {
           lastZaloInboxSummary = 'Đã nhận vote từ Zalo: ${r.appliedNames.join(', ')}';
         }
+        // Chưa có buổi nào đang vote: giữ lại tin giống vote tối đa 3 ngày,
+        // để khi tạo buổi mới sẽ được tính.
+        final cutoff = DateTime.now().subtract(const Duration(days: 3));
+        for (final u in updates) {
+          if (r.unprocessedIds.contains(u.messageId) && u.date.isAfter(cutoff)) {
+            keep.add(idOf[u.messageId]!);
+          }
+        }
       }
-      await repo.deleteZaloInbox(docs.map((d) => d.id));
+      final toDelete = docs.map((d) => d.id).where((id) => !keep.contains(id)).toList();
+      // Giữ lại các tin chưa xử lý để lần sau (khi có buổi vote) tính tiếp.
+      _pendingInbox = docs.where((d) => keep.contains(d.id)).toList();
+      if (toDelete.isNotEmpty) await repo.deleteZaloInbox(toDelete);
       notifyListeners();
     } catch (_) {
       // Lỗi mạng: tin vẫn còn trong hộp thư, lần sau xử lý lại.
     } finally {
       _processingInbox = false;
-      if (_pendingInbox.isNotEmpty) _processInbox();
+      if (_inboxDirty) {
+        _inboxDirty = false;
+        _processInbox();
+      }
     }
   }
 

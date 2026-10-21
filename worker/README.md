@@ -1,7 +1,14 @@
-# Zalo webhook trên Cloudflare Workers
+# Zalo webhook + proxy trên Cloudflare Workers
 
-Worker nhận tin từ Zalo Bot (webhook) và ghi vào Firestore `teams/{teamId}/zaloInbox`.
-App đọc hộp thư này và biến reply thành vote. Miễn phí (gói Free của Cloudflare: 100.000 request/ngày).
+Worker làm hai việc, miễn phí (gói Free của Cloudflare: 100.000 request/ngày):
+
+1. **Webhook**: nhận tin từ Zalo Bot và ghi vào Firestore `teams/{teamId}/zaloInbox`. App đọc hộp thư này và biến reply thành vote.
+2. **Proxy Zalo API** (`POST /<teamId>/zalo/<method>`): bản web của app gọi Zalo qua đây vì Zalo không bật CORS cho trình duyệt.
+   Bản iOS/Android gọi thẳng Zalo, không cần proxy.
+
+Nếu bạn đã tạo Worker bằng cách kết nối repo GitHub, Cloudflare sẽ tự build lại mỗi lần push lên `main`.
+Khi đó đường dẫn gốc `/` có thể trả về file HTML của Flutter (do thư mục `web/` được coi là static assets); không ảnh hưởng gì,
+chỉ cần dùng URL có mã nhóm: `https://<worker>.workers.dev/<mã nhóm>`.
 
 ## Cách A: dùng giao diện web (không cần cài gì)
 

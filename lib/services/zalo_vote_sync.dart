@@ -9,11 +9,14 @@ class ZaloSyncResult {
   final List<String> appliedNames; // người đã cập nhật vote
   final int pendingCount; // tin chưa khớp được tên
   final int ignoredCount; // tin không thuộc nhóm / không phải vote
+  /// Tin giống vote nhưng chưa có buổi nào đang vote để nhận → nên giữ lại.
+  final List<String> unprocessedIds;
   const ZaloSyncResult({
     required this.target,
     this.appliedNames = const [],
     this.pendingCount = 0,
     this.ignoredCount = 0,
+    this.unprocessedIds = const [],
   });
 
   bool get isEmpty => appliedNames.isEmpty && pendingCount == 0;
@@ -85,7 +88,16 @@ class ZaloVoteSync {
     await rememberChats(store, updates);
     final session = target ?? pickTarget(store.sessions);
     if (session == null) {
-      return ZaloSyncResult(target: null, ignoredCount: updates.length);
+      final botName = store.settings.zaloBotName;
+      final voteLike = updates
+          .where((u) => parseVote(u.text, botName: botName) != null)
+          .map((u) => u.messageId)
+          .toList();
+      return ZaloSyncResult(
+        target: null,
+        ignoredCount: updates.length - voteLike.length,
+        unprocessedIds: voteLike,
+      );
     }
     final settings = store.settings;
     final groupId = settings.zaloGroupId;
@@ -146,8 +158,12 @@ class ZaloVoteSync {
   /// Ghi nhớ các chat (nhóm / riêng) bot từng nhận tin để người dùng chọn nhóm.
   static Future<void> rememberChats(TeamStore store, List<ZaloUpdate> updates) async {
     if (updates.isEmpty) return;
+    final known = store.settings.zaloChats;
     final chats = <String, Map<String, dynamic>>{};
     for (final u in updates) {
+      final old = known[u.chatId];
+      // Bỏ qua nếu đã lưu đúng tin này rồi (tránh ghi lặp khi xử lý lại).
+      if (old != null && old.lastText == u.text && !u.date.isAfter(old.lastDate)) continue;
       chats[u.chatId] = ZaloChat(
         chatId: u.chatId,
         isGroup: u.isGroup,
@@ -156,6 +172,7 @@ class ZaloVoteSync {
         lastDate: u.date,
       ).toMap();
     }
+    if (chats.isEmpty) return;
     await store.repo.updateSettings({'zaloChats': chats});
   }
 
