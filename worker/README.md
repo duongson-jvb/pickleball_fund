@@ -6,9 +6,11 @@ Worker làm hai việc, miễn phí (gói Free của Cloudflare: 100.000 request
 2. **Proxy Zalo API** (`POST /<teamId>/zalo/<method>`): bản web của app gọi Zalo qua đây vì Zalo không bật CORS cho trình duyệt.
    Bản iOS/Android gọi thẳng Zalo, không cần proxy.
 
-Nếu bạn đã tạo Worker bằng cách kết nối repo GitHub, Cloudflare sẽ tự build lại mỗi lần push lên `main`.
-Khi đó đường dẫn gốc `/` có thể trả về file HTML của Flutter (do thư mục `web/` được coi là static assets); không ảnh hưởng gì,
-chỉ cần dùng URL có mã nhóm: `https://<worker>.workers.dev/<mã nhóm>`.
+Worker hiện tại được Cloudflare **tự build từ repo GitHub** mỗi lần push lên `main` (Workers Builds).
+File `wrangler.toml` ở **gốc repo** là cấu hình cho lần build đó (trỏ tới `worker/src/index.js`). Đừng xoá file này:
+khi thiếu nó, build tự động sẽ deploy sai và mọi đường dẫn trả 404 (đã xảy ra ngày 21/10/2026).
+`ZALO_SECRET` là Secret trên Cloudflare, không nằm trong repo; nếu sau một lần build mà `POST` không có header secret
+vẫn trả 200 thì secret đã mất, đặt lại bằng `wrangler secret put ZALO_SECRET` trong thư mục `worker/`.
 
 ## Cách A: dùng giao diện web (không cần cài gì)
 
