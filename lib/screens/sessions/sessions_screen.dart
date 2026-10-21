@@ -18,6 +18,7 @@ class SessionsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Buổi chơi')),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'fab-sessions',
         onPressed: () => Navigator.push(
             context, MaterialPageRoute(builder: (_) => const SessionFormScreen())),
         icon: const Icon(Icons.add),

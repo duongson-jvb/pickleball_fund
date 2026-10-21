@@ -4,6 +4,7 @@ import '../../models/models.dart';
 import '../../services/team_store.dart';
 import '../../services/zalo_bot_service.dart';
 import '../../services/zalo_vote_sync.dart';
+import '../../utils/text.dart';
 import '../../widgets/common.dart';
 
 /// Cài đặt Zalo Bot: token, nhóm nhận vote, kiểm tra kết nối, người đã liên kết.
@@ -84,17 +85,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     );
   }
 
-  String _randomSecret() {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final seed = DateTime.now().microsecondsSinceEpoch;
-    var x = seed;
-    final sb = StringBuffer();
-    for (var i = 0; i < 32; i++) {
-      x = (x * 1103515245 + 12345) & 0x7fffffff;
-      sb.write(chars[x % chars.length]);
-    }
-    return sb.toString();
-  }
+  String _randomSecret() => randomSecret();
 
   Future<void> _enableWebhook() async {
     final store = TeamScope.of(context);

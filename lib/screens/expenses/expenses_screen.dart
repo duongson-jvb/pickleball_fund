@@ -18,6 +18,7 @@ class ExpensesScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Chi phí khác')),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'fab-expenses',
         onPressed: () => Navigator.push(
             context, MaterialPageRoute(builder: (_) => const ExpenseFormScreen())),
         icon: const Icon(Icons.add),
