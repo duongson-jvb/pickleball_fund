@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "730307324235",
+    "project_id": "pickleball-fund-phm",
+    "storage_bucket": "pickleball-fund-phm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:730307324235:android:69f5c814c35bd8d3e960ce",
+        "android_client_info": {
+          "package_name": "com.phmsolution.pickleball_fund"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC5D2n605y0I85KFo5xe0cCpYUjFawMjCQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
