@@ -6,6 +6,7 @@ import '../../utils/format.dart';
 import '../../widgets/common.dart';
 import 'drink_types_screen.dart';
 import 'qr_screen.dart';
+import 'zalo_bot_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, required this.teamId, required this.onLeaveTeam});
@@ -105,6 +106,17 @@ class SettingsScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () =>
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const QrScreen())),
+          ),
+          ListTile(
+            leading: const Icon(Icons.smart_toy_outlined),
+            title: const Text('Zalo Bot (vote tự động)'),
+            subtitle: Text(store.settings.hasZaloBot
+                ? 'Đã kết nối: ${store.settings.zaloBotName}'
+                    '${store.settings.zaloGroupId.isEmpty ? ' · chưa chọn nhóm' : ''}'
+                : 'Chưa kết nối'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+                context, MaterialPageRoute(builder: (_) => const ZaloBotScreen())),
           ),
           const Divider(),
           ListTile(

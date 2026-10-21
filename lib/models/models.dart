@@ -21,6 +21,10 @@ class TeamSettings {
   final int lowBalanceThreshold;
   final String? qrImageBase64;
   final String bankInfo;
+  final String zaloBotToken;
+  final String zaloBotName;
+  final String zaloGroupId; // chat_id của nhóm Zalo đã chọn
+  final String zaloGroupName;
 
   const TeamSettings({
     required this.id,
@@ -28,7 +32,13 @@ class TeamSettings {
     this.lowBalanceThreshold = 50000,
     this.qrImageBase64,
     this.bankInfo = '',
+    this.zaloBotToken = '',
+    this.zaloBotName = '',
+    this.zaloGroupId = '',
+    this.zaloGroupName = '',
   });
+
+  bool get hasZaloBot => zaloBotToken.isNotEmpty;
 
   factory TeamSettings.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data() ?? {};
@@ -38,6 +48,10 @@ class TeamSettings {
       lowBalanceThreshold: _toInt(d['lowBalanceThreshold'] ?? 50000),
       qrImageBase64: d['qrImage'] as String?,
       bankInfo: (d['bankInfo'] as String?) ?? '',
+      zaloBotToken: (d['zaloBotToken'] as String?) ?? '',
+      zaloBotName: (d['zaloBotName'] as String?) ?? '',
+      zaloGroupId: (d['zaloGroupId'] as String?) ?? '',
+      zaloGroupName: (d['zaloGroupName'] as String?) ?? '',
     );
   }
 }
@@ -49,6 +63,8 @@ class Player {
   final String phone;
   final String note;
   final bool active;
+  final String zaloId; // id người dùng Zalo (từ bot), dùng để tự khớp vote
+  final String zaloName; // tên hiển thị trên Zalo lúc khớp
   final DateTime createdAt;
 
   const Player({
@@ -57,6 +73,8 @@ class Player {
     this.phone = '',
     this.note = '',
     this.active = true,
+    this.zaloId = '',
+    this.zaloName = '',
     required this.createdAt,
   });
 
@@ -68,6 +86,8 @@ class Player {
       phone: (d['phone'] as String?) ?? '',
       note: (d['note'] as String?) ?? '',
       active: (d['active'] as bool?) ?? true,
+      zaloId: (d['zaloId'] as String?) ?? '',
+      zaloName: (d['zaloName'] as String?) ?? '',
       createdAt: _toDate(d['createdAt']),
     );
   }
@@ -77,8 +97,43 @@ class Player {
         'phone': phone,
         'note': note,
         'active': active,
+        'zaloId': zaloId,
+        'zaloName': zaloName,
         'createdAt': Timestamp.fromDate(createdAt),
       };
+}
+
+/// Một tin vote từ Zalo chưa khớp được với người chơi nào.
+class ZaloPendingVote {
+  final String zaloId;
+  final String name;
+  final String text;
+  final bool? vote; // true đi, false không, null không hiểu
+  final DateTime date;
+
+  const ZaloPendingVote({
+    required this.zaloId,
+    required this.name,
+    required this.text,
+    required this.vote,
+    required this.date,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'zaloId': zaloId,
+        'name': name,
+        'text': text,
+        'vote': vote,
+        'date': Timestamp.fromDate(date),
+      };
+
+  factory ZaloPendingVote.fromMap(Map<String, dynamic> m) => ZaloPendingVote(
+        zaloId: (m['zaloId'] as String?) ?? '',
+        name: (m['name'] as String?) ?? '',
+        text: (m['text'] as String?) ?? '',
+        vote: m['vote'] as bool?,
+        date: _toDate(m['date']),
+      );
 }
 
 /// Loại giao dịch trong sổ quỹ.
@@ -283,6 +338,8 @@ class Session {
   final Map<String, Map<String, int>> drinks; // playerId -> {drinkTypeId: sl}
   final String note;
   final SessionSettlement settlement;
+  final String zaloVoteMessageId; // id tin vote bot đã gửi lên nhóm
+  final List<ZaloPendingVote> zaloPending; // vote Zalo chưa khớp tên
   final DateTime createdAt;
 
   const Session({
@@ -300,6 +357,8 @@ class Session {
     this.drinks = const {},
     this.note = '',
     this.settlement = const SessionSettlement(),
+    this.zaloVoteMessageId = '',
+    this.zaloPending = const [],
     required this.createdAt,
   });
 
@@ -336,6 +395,10 @@ class Session {
       note: (d['note'] as String?) ?? '',
       settlement: SessionSettlement.fromMap(
           (d['settlement'] as Map?)?.cast<String, dynamic>()),
+      zaloVoteMessageId: (d['zaloVoteMessageId'] as String?) ?? '',
+      zaloPending: ((d['zaloPending'] as List?) ?? [])
+          .map((e) => ZaloPendingVote.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList(),
       createdAt: _toDate(d['createdAt']),
     );
   }
@@ -354,6 +417,8 @@ class Session {
         'drinks': drinks,
         'note': note,
         'settlement': settlement.toMap(),
+        'zaloVoteMessageId': zaloVoteMessageId,
+        'zaloPending': zaloPending.map((e) => e.toMap()).toList(),
         'createdAt': Timestamp.fromDate(createdAt),
       };
 
@@ -372,6 +437,8 @@ class Session {
     Map<String, Map<String, int>>? drinks,
     String? note,
     SessionSettlement? settlement,
+    String? zaloVoteMessageId,
+    List<ZaloPendingVote>? zaloPending,
   }) =>
       Session(
         id: id,
@@ -389,6 +456,8 @@ class Session {
         drinks: drinks ?? this.drinks,
         note: note ?? this.note,
         settlement: settlement ?? this.settlement,
+        zaloVoteMessageId: zaloVoteMessageId ?? this.zaloVoteMessageId,
+        zaloPending: zaloPending ?? this.zaloPending,
         createdAt: createdAt,
       );
 }

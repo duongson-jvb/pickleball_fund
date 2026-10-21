@@ -60,6 +60,21 @@ Số dư = tổng các dòng trong `ledger`. Khi sửa buổi chơi / chi phí, 
 
 ## Zalo
 
-Zalo không có API công khai để tạo / đọc bình chọn trong nhóm chat, nên app dùng cách:
+Zalo không có API công khai để tạo / đọc bình chọn trong nhóm chat. App hỗ trợ hai cách:
+
+### Cách 1: Zalo Bot (tự động, miễn phí, không cần server)
+
+1. Trong Zalo, nhắn cho OA **Zalo Bot Manager** → *Tạo bot* → nhận Bot Token.
+2. App → Cài đặt → **Zalo Bot** → dán token → *Kiểm tra & lưu*.
+3. Bot Creator → *Mời Bot vào nhóm* → gửi link vào nhóm, trưởng nhóm bấm link.
+4. App → *Tìm nhóm*, rồi vào nhóm gõ `@tên bot` để app nhận ra `chat_id` nhóm.
+5. Ở buổi chơi → tab Vote → **Gửi vote qua bot**. Thành viên **Reply** tin của bot: `1` = đi, `0` = không đi.
+   App gọi `getUpdates` (long polling) khi đang mở tab Vote hoặc bấm *Đồng bộ ngay*, khớp người gửi với người chơi
+   (lần đầu theo tên hiển thị, sau đó nhớ Zalo id). Tin không khớp được tên hiện ở mục "chưa khớp" để gán tay.
+
+Giới hạn của Zalo Bot API: bot chỉ thấy tin **reply** hoặc **@mention** bot, không sửa/xoá tin, không có nút bấm,
+tính năng bot trong nhóm đang ở giai đoạn thử nghiệm. Token lưu trong tài liệu nhóm trên Firestore (ai có mã nhóm đều đọc được).
+
+### Cách 2: thủ công
 - **Tạo vote**: sinh sẵn nội dung vote → chia sẻ sang Zalo.
-- **Đồng bộ kết quả**: copy danh sách người đã vote trên Zalo → dán vào app → app khớp tên (không dấu, không phân biệt hoa thường) với danh sách người chơi.
+- **Dán kết quả**: copy danh sách người đã vote trên Zalo → dán vào app → app khớp tên (không dấu, không phân biệt hoa thường).
