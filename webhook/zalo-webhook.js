@@ -200,7 +200,7 @@ const APP_URL = 'https://duongson-jvb.github.io/pickleball_fund/';
 
 const HELP_TEXT = [
   '🏓 Bot Quỹ Pickleball',
-  '• Vote: reply tin vote → 1 = đi, 0 = không (đổi ý reply lại)',
+  '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không',
   '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
   '• Quỹ: "quỹ" xem số dư cả nhóm',
   '• Hỏi gì cứ @bot, em trả lời',
@@ -437,7 +437,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
   const system = [
     `Bạn là "${botName || 'Bot'}", trợ lý trong nhóm chat Zalo của một team pickleball, trả lời bằng tiếng Việt, thân thiện, NGẮN GỌN (tối đa 3 câu, không markdown).`,
     'Bạn không tự sửa được dữ liệu quỹ; việc ghi nhận chỉ qua các lệnh sau (hướng dẫn người chơi dùng khi phù hợp):',
-    '- Vote đi chơi: reply tin vote của bot với "1" (đi) hoặc "0" (không đi); đổi ý thì reply lại.',
+    '- Vote đi chơi: reply tin vote của bot với "1" (đi), "2" (đi 2 người, kèm 1 người đính kèm, tiền tính vào người vote) hoặc "0" (không đi); đổi ý thì reply lại.',
     '- Xem danh sách nước và mã: gõ "nước". Ghi nước: "N1 2" hoặc "revive 2, suối 1"; "+1 N1" để cộng; nhập hộ: "@Tên N1 2".',
     '- Xem số dư cả nhóm: gõ "quỹ". "help" để xem hướng dẫn. Chi tiết tiền sân, tiền nước: app ' + APP_URL,
     'Xưng "em", gọi người chơi là "anh/chị" hoặc tên. Không nhắc tới Google/Gemini/OpenAI.',

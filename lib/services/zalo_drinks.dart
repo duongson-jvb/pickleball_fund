@@ -120,8 +120,10 @@ class ZaloDrinks {
   static Session? pickSession(List<Session> sessions, String playerId, DateTime at) {
     Session? best;
     Duration? bestGap;
+    // Người đính kèm ("<host>#n"): tính theo người vote (host) của họ.
+    final lookup = Session.isCompanionId(playerId) ? Session.hostOf(playerId) : playerId;
     for (final s in sessions) {
-      if (!s.playerIds.contains(playerId) && !(s.votes[playerId] == true)) continue;
+      if (!s.playerIds.contains(lookup) && !(s.votes[lookup] == true)) continue;
       final gap = at.difference(s.date);
       if (gap > const Duration(hours: 36) || gap < const Duration(hours: -6)) continue;
       final abs = gap.abs();

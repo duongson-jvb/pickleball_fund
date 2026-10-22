@@ -328,6 +328,41 @@ class _VoteTabState extends State<_VoteTab> {
     await ZaloVoteSync.resolvePending(store, latest ?? session, p, player, voteOverride: vote);
   }
 
+  /// Đặt số người đính kèm cho một người đã vote "đi". Tiền của người đính kèm
+  /// trừ vào người vote. Người thường chỉ sửa được khi còn hạn và còn chỗ.
+  Future<void> _setCompanions(
+      BuildContext context, TeamStore store, Session s, Player p, int n) async {
+    final count = n.clamp(0, 9);
+    if (store.isAdmin) {
+      await onMutate((l) {
+        final c = {...l.companions};
+        if (count > 0) {
+          c[p.id] = count;
+        } else {
+          c.remove(p.id);
+        }
+        return l.copyWith(companions: c);
+      });
+      return;
+    }
+    if (s.voteExpired) {
+      showSnack(context, 'Đã hết hạn vote');
+      return;
+    }
+    if (s.maxPlayers != null) {
+      final others = s.seatsTaken - (1 + s.companionsOf(p.id));
+      if (others + 1 + count > s.maxPlayers!) {
+        showSnack(context, 'Không đủ chỗ: chỉ còn ${s.maxPlayers! - others - 1} suất đính kèm');
+        return;
+      }
+    }
+    try {
+      await store.repo.setVote(s.id, p.id, true, companions: count);
+    } catch (e) {
+      if (context.mounted) showSnack(context, 'Không lưu được: $e');
+    }
+  }
+
   Future<void> _importFromZalo(BuildContext context) async {
     final store = TeamScope.of(context);
     final ctrl = TextEditingController();
@@ -388,11 +423,15 @@ class _VoteTabState extends State<_VoteTab> {
       danger: false,
     );
     if (!ok) return;
-    await onMutate((l) => l.copyWith(
-          status: SessionStatus.closed,
-          // Người vote trước được ưu tiên khi phải cắt theo giới hạn.
-          playerIds: l.playersForClosing(),
-        ));
+    await onMutate((l) {
+      // Người vote trước được ưu tiên khi phải cắt theo giới hạn (tính cả đính kèm).
+      final ids = l.playersForClosing();
+      return l.copyWith(
+        status: SessionStatus.closed,
+        playerIds: ids,
+        companions: l.companionsForClosing(ids),
+      );
+    });
     widget.onClosed();
   }
 
@@ -562,7 +601,32 @@ class _VoteTabState extends State<_VoteTab> {
             value: s.votes[p.id] ?? false,
             title: Text(p.name),
             subtitle: s.votes.containsKey(p.id)
-                ? Text(s.votes[p.id]! ? 'Đi' : 'Không đi')
+                ? (s.votes[p.id]!
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(s.companionsOf(p.id) > 0
+                              ? 'Đi · kèm ${s.companionsOf(p.id)} người'
+                              : 'Đi'),
+                          if (voting) ...[
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: 'Bớt người đính kèm',
+                              icon: const Icon(Icons.remove_circle_outline, size: 18),
+                              onPressed: s.companionsOf(p.id) == 0
+                                  ? null
+                                  : () => _setCompanions(context, store, s, p, s.companionsOf(p.id) - 1),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: 'Thêm người đính kèm (tiền trừ vào ${p.name})',
+                              icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                              onPressed: () => _setCompanions(context, store, s, p, s.companionsOf(p.id) + 1),
+                            ),
+                          ],
+                        ],
+                      )
+                    : const Text('Không đi'))
                 : const Text('Chưa vote'),
             secondary: CircleAvatar(
                 radius: 16, child: Text(p.name.isEmpty ? '?' : p.name[0].toUpperCase())),
@@ -713,6 +777,7 @@ class _PlayersTab extends StatelessWidget {
             subtitle: Text(
               [
                 'Số dư ${vnd(store.balanceOf(p.id))}',
+                if (s.companionsOf(p.id) > 0) 'kèm ${s.companionsOf(p.id)} người (tiền tính vào ${p.name})',
                 if ((st.courtPerPlayer[p.id] ?? 0) > 0) 'sân -${vnd(st.courtPerPlayer[p.id]!)}',
                 if ((st.drinkPerPlayer[p.id] ?? 0) > 0) 'nước -${vnd(st.drinkPerPlayer[p.id]!)}',
               ].join(' · '),
@@ -855,7 +920,7 @@ class _DrinksTab extends StatelessWidget {
             ),
           ),
         ),
-        for (final pid in {...s.playerIds, ...s.drinks.keys})
+        for (final pid in {...s.playerIds, ...s.companionIds, ...s.drinks.keys})
           Card(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -969,10 +1034,13 @@ class _SummaryTab extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Text('Từng người', style: TextStyle(fontWeight: FontWeight.bold)),
         ),
-        for (final pid in {...s.playerIds, ...s.drinks.keys})
+        // Người đính kèm đã gộp tiền vào người vote → chỉ liệt kê người thật.
+        for (final pid in {...s.playerIds, ...s.drinks.keys}.where((k) => !Session.isCompanionId(k)))
           ListTile(
             dense: true,
-            title: Text(store.playerName(pid)),
+            title: Text(s.companionsOf(pid) > 0
+                ? '${store.playerName(pid)} (+${s.companionsOf(pid)} đính kèm)'
+                : store.playerName(pid)),
             subtitle: Text([
               if ((st.courtPerPlayer[pid] ?? 0) > 0) 'Sân ${vnd(st.courtPerPlayer[pid]!)}',
               if ((st.drinkPerPlayer[pid] ?? 0) > 0) 'Nước ${vnd(st.drinkPerPlayer[pid]!)}',

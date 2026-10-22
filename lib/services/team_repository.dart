@@ -109,11 +109,13 @@ class TeamRepository {
   Future<void> claimAdmin(String uid) => teamDoc.set({'adminUid': uid}, SetOptions(merge: true));
 
   /// Người thường (không phải quản trị) chỉ được đổi vote của buổi đang mở vote.
-  Future<void> setVote(String sessionId, String playerId, bool vote) =>
+  Future<void> setVote(String sessionId, String playerId, bool vote, {int companions = 0}) =>
       sessions.doc(sessionId).update({
         'votes.$playerId': vote,
         // Mốc thời gian vote để khi đủ người thì ưu tiên ai vote trước.
         'voteTimes.$playerId': Timestamp.fromDate(DateTime.now()),
+        // Người đính kèm đi cùng (chỉ khi vote "đi").
+        'companions.$playerId': (vote && companions > 0) ? companions : FieldValue.delete(),
       });
 
   // -------------------------------------------- số liệu gốc lúc tính tiền

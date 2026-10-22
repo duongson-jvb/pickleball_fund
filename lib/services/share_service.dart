@@ -110,14 +110,17 @@ class ShareService {
     }
     sb.writeln('—');
     // Gồm cả người không trong danh sách chơi nhưng có ghi nước (nhập hộ qua Zalo).
-    for (final pid in {...s.playerIds, ...s.drinks.keys}) {
+    // Người đính kèm ("<id>#n") đã gộp tiền vào người vote nên không liệt kê riêng.
+    final pids = {...s.playerIds, ...s.drinks.keys}.where((k) => !Session.isCompanionId(k));
+    for (final pid in pids) {
       final court = st.courtPerPlayer[pid] ?? 0;
       final drink = st.drinkPerPlayer[pid] ?? 0;
       final parts = <String>[];
       if (court > 0) parts.add('sân ${vnd(court)}');
       if (drink > 0) parts.add('nước ${vnd(drink)}');
       final detail = parts.isEmpty ? 'không trừ' : parts.join(' + ');
-      sb.writeln('• ${store.playerName(pid)}: $detail'
+      final comp = s.companionsOf(pid);
+      sb.writeln('• ${store.playerName(pid)}${comp > 0 ? ' (+$comp đính kèm)' : ''}: $detail'
           ' → còn ${vnd(store.balanceOf(pid))}');
     }
     if (s.note.isNotEmpty) sb.writeln('📝 ${s.note}');
@@ -144,12 +147,13 @@ class ShareService {
     if (s.createdByName.isNotEmpty) sb.writeln('👤 Người tạo: ${s.createdByName}');
     sb.writeln('⏰ Hạn vote: ${fmtDateTime(s.effectiveVoteDeadline)}');
     if (s.maxPlayers != null) sb.writeln('👥 Giới hạn: ${s.maxPlayers} người');
-    sb.writeln('👉 Ai đi thì vote nhé! Hết hạn tự chốt danh sách.');
+    sb.writeln('👉 Reply 1 = đi, 2 = đi 2 người (kèm 1), 0 = không. Hết hạn tự chốt.');
     final yes = s.votedYes;
     if (yes.isNotEmpty) {
-      sb.writeln('\nĐã vote đi (${yes.length}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''}):');
+      sb.writeln('\nĐã vote đi (${s.seatsTaken}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} suất):');
       for (final pid in yes) {
-        sb.writeln('✅ ${store.playerName(pid)}');
+        final c = s.companionsOf(pid);
+        sb.writeln('✅ ${store.playerName(pid)}${c > 0 ? ' (+$c)' : ''}');
       }
     }
     return sb.toString();

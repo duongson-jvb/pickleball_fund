@@ -47,6 +47,7 @@ Mọi dịch vụ đều ở gói miễn phí, không cần thẻ.
 | Tạo buổi | Tiêu đề, ngày giờ, địa điểm, tiền sân (nhập sau được), ảnh đặt sân, ghi chú. **Người tạo** (bắt buộc, gợi ý từ danh sách). **Hạn vote** (mặc định = giờ chơi, không muộn hơn giờ chơi, cách lúc tạo ≥ 30 phút). **Giới hạn số người** (trống = không giới hạn). |
 | Vote trong app | Tick đi/không cho từng người. Người thường chỉ vote khi còn hạn và chưa đủ người. |
 | Vote qua Zalo | "Gửi vote qua bot" → thành viên reply `1`/`0`. Đổi ý reply lại. Chỉ tính tin gửi **sau khi tạo buổi** và **trước hạn vote**. Đủ người thì không nhận thêm "đi" (người đã đi vẫn đổi ý được). |
+| Người đính kèm | Reply `2` = đi 2 người (kèm 1), `3` = kèm 2... Người đính kèm hiện trong buổi với tên "An đính kèm 1, 2..."; **tiền sân và tiền nước của họ trừ vào người vote**. Giới hạn số người tính cả đính kèm; khi phải cắt thì giảm đính kèm của người vào sau. Trong app chỉnh số đính kèm bằng nút +/− cạnh người đã vote đi; ghi nước cho đính kèm qua Zalo: `@An đính kèm 1 N1 2`. |
 | Tự chốt | Hết hạn vote → máy quản trị tự chốt danh sách, tính tiền. Kiểm tra mỗi phút. Khi phải cắt theo giới hạn, **ai vote trước được ưu tiên** (app lưu thời điểm vote). |
 | Chốt tay / sửa danh sách | Chốt danh sách từ vote; sau đó vẫn thêm/bớt người thực tế, thêm **khách** (chia tiền sân, trả tiền mặt, không trừ quỹ). Tiền tự tính lại. |
 | Tiền sân | Chia theo đầu người (người chơi + khách). Phần của người chơi: **trừ quỹ chung trước**, hết thì **chia đều phần thiếu**. |

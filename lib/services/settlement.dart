@@ -17,7 +17,9 @@ class Settlement {
         share += 1;
         remainder -= 1;
       }
-      result[id] = share;
+      // Một id xuất hiện nhiều lần (người vote kèm người đính kèm) thì cộng dồn:
+      // phần của người đính kèm trừ vào người vote.
+      result[id] = (result[id] ?? 0) + share;
     }
     return result;
   }
@@ -34,7 +36,13 @@ class Settlement {
     required int commonFundAvailable,
   }) {
     final players = session.playerIds;
-    final participants = players.length + session.guestCount;
+    // Mỗi người vote kèm N người đính kèm = N+1 suất; suất của người đính kèm
+    // tính vào người vote.
+    final units = <String>[
+      for (final id in players)
+        for (var i = 0; i <= session.companionsOf(id); i++) id,
+    ];
+    final participants = units.length + session.guestCount;
 
     var perHead = 0;
     var guestCash = 0;
@@ -46,23 +54,26 @@ class Settlement {
       guestCash = perHead * session.guestCount;
       if (guestCash > session.courtFee) guestCash = session.courtFee;
       final teamShare = session.courtFee - guestCash;
-      if (players.isNotEmpty) {
+      if (units.isNotEmpty) {
         commonUsed = commonFundAvailable.clamp(0, teamShare);
         final remaining = teamShare - commonUsed;
-        courtPerPlayer = splitEqually(remaining, players);
+        courtPerPlayer = splitEqually(remaining, units);
       } else {
         // Chỉ có khách: toàn bộ tiền sân thu tiền mặt.
         guestCash = session.courtFee;
       }
     }
 
+    // Tiền nước: nước của người đính kèm ("<id>#1") gộp vào người vote.
     final drinkPerPlayer = <String, int>{};
     session.drinks.forEach((pid, items) {
       var sum = 0;
       items.forEach((drinkId, qty) {
         sum += qty * (session.drinkPrices[drinkId] ?? 0);
       });
-      if (sum > 0) drinkPerPlayer[pid] = sum;
+      if (sum <= 0) return;
+      final owner = Session.isCompanionId(pid) ? Session.hostOf(pid) : pid;
+      drinkPerPlayer[owner] = (drinkPerPlayer[owner] ?? 0) + sum;
     });
 
     return SessionSettlement(

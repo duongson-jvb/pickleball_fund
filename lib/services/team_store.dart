@@ -85,8 +85,11 @@ class TeamStore extends ChangeNotifier {
       try {
         // Ưu tiên người vote trước khi phải cắt theo giới hạn.
         final ids = s.playersForClosing();
-        await repo.saveAndSettleSession(
-            s.copyWith(status: SessionStatus.closed, playerIds: ids));
+        await repo.saveAndSettleSession(s.copyWith(
+          status: SessionStatus.closed,
+          playerIds: ids,
+          companions: s.companionsForClosing(ids),
+        ));
         lastZaloInboxSummary = 'Đã tự chốt "${s.title.isEmpty ? 'buổi chơi' : s.title}" khi hết hạn vote';
         notifyListeners();
       } catch (_) {
@@ -172,7 +175,14 @@ class TeamStore extends ChangeNotifier {
     return null;
   }
 
-  String playerName(String id) => playerById(id)?.name ?? '(đã xoá)';
+  String playerName(String id) {
+    // Người đính kèm: "<hostId>#n" → "Tên host đính kèm n".
+    if (Session.isCompanionId(id)) {
+      final host = playerById(Session.hostOf(id))?.name ?? '(đã xoá)';
+      return '$host đính kèm ${Session.companionIndex(id)}';
+    }
+    return playerById(id)?.name ?? '(đã xoá)';
+  }
 
   DrinkType? drinkTypeById(String id) {
     for (final d in drinkTypes) {

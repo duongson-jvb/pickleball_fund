@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+import 'package:cloud_firestore/cloud_firestore.dart' show FieldValue, Timestamp;
 
 import '../models/models.dart';
 import '../utils/format.dart';
@@ -50,9 +50,26 @@ class ZaloVoteSync {
     t = t.replaceAll('@', ' ').replaceAll(RegExp(r'[.,!?()\[\]:;]+'), ' ');
     t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (t.isEmpty) return null;
+    // Chỉ là số: "0" = không đi; "1", "2", "3"... = đi (số suất, kèm người đính kèm).
+    final num = RegExp(r'^\+?(\d{1,2})(\s+(nguoi|ng|suat|slot))?$').firstMatch(t);
+    if (num != null) return int.parse(num.group(1)!) > 0;
     if (_noPattern.hasMatch(t)) return false;
     if (_yesPattern.hasMatch(t)) return true;
     return null;
+  }
+
+  /// Số suất khi vote "đi": "1"/"đi" = 1 (một mình), "2" = 2 (kèm 1 người),
+  /// "3 người", "đi 2" = số tương ứng. Tối đa 10. Không phải vote đi → null.
+  static int? parseVoteCount(String text, {String botName = ''}) {
+    if (parseVote(text, botName: botName) != true) return null;
+    var t = normalizeVi(text);
+    if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
+    t = t.replaceAll('@', ' ').replaceAll(RegExp(r'[.,!?()\[\]:;]+'), ' ');
+    final m = RegExp(r'(^|\s)\+?(\d{1,2})(\s|$)').firstMatch(t);
+    if (m == null) return 1;
+    final n = int.parse(m.group(2)!);
+    if (n < 1) return null;
+    return n.clamp(1, 10);
   }
 
   /// Tìm người chơi tương ứng với người gửi Zalo.
@@ -116,6 +133,7 @@ class ZaloVoteSync {
 
     final votes = {...session.votes};
     final voteTimes = {...session.voteTimes};
+    final companions = {...session.companions};
     final pending = {for (final p in session.zaloPending) p.zaloId: p};
     final applied = <String>[];
     final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
@@ -199,13 +217,20 @@ class ZaloVoteSync {
         player = created[u.fromId];
       }
 
-      // Đã đủ số người: không nhận thêm vote "đi" (người đã "đi" vẫn được đổi ý).
-      final yesCount = votes.values.where((v) => v).length;
-      final alreadyYes = player != null && votes[player.id] == true;
-      if (vote == true && session.maxPlayers != null && yesCount >= session.maxPlayers! && !alreadyYes) {
-        fullNames.add(player?.name ?? u.fromName);
-        ignored++;
-        continue;
+      // Số suất: "2" = đi kèm 1 người đính kèm. Kiểm tra chỗ còn trống (tính cả
+      // đính kèm). Người đã "đi" chỉ bị chặn nếu xin THÊM suất mà không còn chỗ.
+      final count = vote == true ? (parseVoteCount(u.text, botName: settings.zaloBotName) ?? 1) : 0;
+      if (vote == true && session.maxPlayers != null) {
+        var seats = 0;
+        votes.forEach((pid, v) {
+          if (v) seats += 1 + (companions[pid] ?? 0);
+        });
+        final mine = (player != null && votes[player.id] == true) ? 1 + (companions[player.id] ?? 0) : 0;
+        if (seats - mine + count > session.maxPlayers!) {
+          fullNames.add('${player?.name ?? u.fromName}${count > 1 ? ' ($count suất)' : ''}');
+          ignored++;
+          continue;
+        }
       }
 
       // Người reply vote rõ nghĩa nhưng chưa có trong danh sách → tự thêm người chơi.
@@ -225,6 +250,12 @@ class ZaloVoteSync {
       if (player != null && vote != null) {
         votes[player.id] = vote;
         voteTimes[player.id] = u.date;
+        // Người đính kèm: "2" → 1 đính kèm; vote không đi hoặc "1" → bỏ đính kèm.
+        if (vote && count > 1) {
+          companions[player.id] = count - 1;
+        } else {
+          companions.remove(player.id);
+        }
         pending.remove(u.fromId);
         if (!applied.contains(player.name)) applied.add(player.name);
         // Ghi nhớ Zalo id để lần sau khớp chính xác.
@@ -246,9 +277,15 @@ class ZaloVoteSync {
     }
 
     if (applied.isNotEmpty || pending.length != session.zaloPending.length) {
+      // companions ghi theo từng khoá (xoá khoá đã bỏ) để chắc chắn khoá cũ biến mất.
+      final companionUpdates = <String, dynamic>{
+        for (final k in {...session.companions.keys, ...companions.keys})
+          'companions.$k': companions.containsKey(k) ? companions[k] : FieldValue.delete(),
+      };
       await store.repo.updateSessionFields(session.id, {
         'votes': votes,
         'voteTimes': voteTimes.map((k, v) => MapEntry(k, Timestamp.fromDate(v))),
+        ...companionUpdates,
         'zaloPending': pending.values.map((e) => e.toMap()).toList(),
       });
     }
@@ -270,8 +307,18 @@ class ZaloVoteSync {
     final settings = store.settings;
     final sender = matchPlayer(
         zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
+    // Người đính kèm của các buổi gần đây cũng @ được: "@An đính kèm 1 N1 2"
+    // (id ảo "<host>#1", tiền trừ vào người vote).
+    final virtual = <Player>[];
+    for (final s in store.sessions) {
+      if (u.date.difference(s.date).abs() > const Duration(hours: 36)) continue;
+      for (final cid in s.companionIds) {
+        if (virtual.any((p) => p.id == cid)) continue;
+        virtual.add(Player(id: cid, name: store.playerName(cid), createdAt: s.createdAt));
+      }
+    }
     final assignments = ZaloDrinks.parseMulti(
-        u.text, store.drinkTypes, store.activePlayers, botName: settings.zaloBotName);
+        u.text, store.drinkTypes, [...store.activePlayers, ...virtual], botName: settings.zaloBotName);
 
     final lines = <String>[];
     final notes = <String>[];
@@ -304,7 +351,10 @@ class ZaloVoteSync {
       var s = touched[session.id] ?? session;
       // KHÔNG tự thêm người vào danh sách chơi (sẽ làm tiền sân của người khác
       // đổi). Chỉ ghi nước; quản lý thêm họ vào buổi nếu họ có chơi.
-      final notInSession = !s.playerIds.contains(target.id);
+      final notInSession = Session.isCompanionId(target.id)
+          ? !(s.playerIds.contains(Session.hostOf(target.id)) &&
+              Session.companionIndex(target.id) <= s.companionsOf(Session.hostOf(target.id)))
+          : !s.playerIds.contains(target.id);
       // Đóng băng giá nước cho các loại chưa có giá trong buổi.
       final prices = {...s.drinkPrices};
       for (final c in a.command.changes) {

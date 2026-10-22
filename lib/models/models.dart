@@ -405,6 +405,9 @@ class Session {
   final DateTime? voteDeadline; // hạn vote (mặc định = giờ bắt đầu chơi)
   final int? maxPlayers; // giới hạn số người chơi (null = không giới hạn)
   final Map<String, DateTime> voteTimes; // playerId -> lúc vote gần nhất (để ưu tiên ai vote trước)
+  /// playerId -> số người đính kèm đi cùng (vote "2" = 1 đính kèm, "3" = 2...).
+  /// Tiền sân / tiền nước của người đính kèm trừ vào người vote.
+  final Map<String, int> companions;
   final DateTime createdAt;
 
   /// Hạn vote hiệu lực: nếu không đặt thì bằng giờ bắt đầu chơi.
@@ -412,8 +415,30 @@ class Session {
   bool get voteExpired => DateTime.now().isAfter(effectiveVoteDeadline);
   bool get isVoteOpen => status == SessionStatus.voting && !voteExpired;
 
-  /// Đã đủ số người (theo vote "đi") chưa.
-  bool get isFull => maxPlayers != null && votedYes.length >= maxPlayers!;
+  /// Số chỗ đã giữ theo vote "đi" (mỗi người + số đính kèm của họ).
+  int get seatsTaken =>
+      votedYes.fold(0, (acc, id) => acc + 1 + (companions[id] ?? 0));
+
+  /// Đã đủ số người (theo vote "đi" + đính kèm) chưa.
+  bool get isFull => maxPlayers != null && seatsTaken >= maxPlayers!;
+
+  /// Số đính kèm của một người trong danh sách chơi.
+  int companionsOf(String playerId) => companions[playerId] ?? 0;
+
+  /// Tổng người đính kèm của những người trong danh sách chơi.
+  int get totalCompanions => playerIds.fold(0, (s, id) => s + companionsOf(id));
+
+  /// Id ảo của người đính kèm: `playerId#1`, `playerId#2`... (dùng cho tiền nước).
+  static String companionId(String hostId, int n) => '$hostId#$n';
+  static bool isCompanionId(String id) => id.contains('#');
+  static String hostOf(String id) => id.split('#').first;
+  static int companionIndex(String id) => int.tryParse(id.split('#').last) ?? 0;
+
+  /// Các id ảo của người đính kèm theo danh sách chơi.
+  List<String> get companionIds => [
+        for (final id in playerIds)
+          for (var n = 1; n <= companionsOf(id); n++) companionId(id, n),
+      ];
 
   /// Người vote "đi" xếp theo thời điểm vote (ai vote trước đứng trước;
   /// không có mốc thời gian thì xếp sau cùng, giữ thứ tự hiện có).
@@ -429,14 +454,41 @@ class Session {
   }
 
   /// Danh sách chơi khi chốt: người đã có trong danh sách + người vote "đi"
-  /// theo thứ tự vote, cắt theo giới hạn số người nếu có.
+  /// theo thứ tự vote. Có giới hạn thì tính cả người đính kèm: ai vào không đủ
+  /// chỗ cho cả nhóm thì giảm số đính kèm cho vừa, hết chỗ thì dừng.
   List<String> playersForClosing() {
     final ids = [...playerIds];
     for (final id in votedYesByTime) {
       if (!ids.contains(id)) ids.add(id);
     }
-    if (maxPlayers != null && ids.length > maxPlayers!) return ids.sublist(0, maxPlayers!);
-    return ids;
+    if (maxPlayers == null) return ids;
+    final out = <String>[];
+    var seats = 0;
+    for (final id in ids) {
+      if (seats >= maxPlayers!) break;
+      out.add(id);
+      seats += 1 + companionsOf(id);
+    }
+    return out;
+  }
+
+  /// Số đính kèm sau khi chốt: nếu nhóm cuối vượt giới hạn thì giảm đính kèm.
+  Map<String, int> companionsForClosing(List<String> closingIds) {
+    final out = <String, int>{};
+    if (maxPlayers == null) {
+      for (final id in closingIds) {
+        if (companionsOf(id) > 0) out[id] = companionsOf(id);
+      }
+      return out;
+    }
+    var seats = 0;
+    for (final id in closingIds) {
+      seats += 1;
+      final allowed = (maxPlayers! - seats).clamp(0, companionsOf(id));
+      if (allowed > 0) out[id] = allowed;
+      seats += allowed;
+    }
+    return out;
   }
 
   const Session({
@@ -461,6 +513,7 @@ class Session {
     this.voteDeadline,
     this.maxPlayers,
     this.voteTimes = const {},
+    this.companions = const {},
     required this.createdAt,
   });
 
@@ -507,6 +560,9 @@ class Session {
       maxPlayers: d['maxPlayers'] == null ? null : _toInt(d['maxPlayers']),
       voteTimes: ((d['voteTimes'] as Map?) ?? {})
           .map((k, v) => MapEntry(k.toString(), _toDate(v))),
+      companions: ((d['companions'] as Map?) ?? {})
+          .map((k, v) => MapEntry(k.toString(), _toInt(v)))
+        ..removeWhere((_, v) => v <= 0),
       createdAt: _toDate(d['createdAt']),
     );
   }
@@ -532,6 +588,7 @@ class Session {
         'voteDeadline': voteDeadline == null ? null : Timestamp.fromDate(voteDeadline!),
         'maxPlayers': maxPlayers,
         'voteTimes': voteTimes.map((k, v) => MapEntry(k, Timestamp.fromDate(v))),
+        'companions': companions,
         'createdAt': Timestamp.fromDate(createdAt),
       };
 
@@ -559,6 +616,7 @@ class Session {
     int? maxPlayers,
     bool clearMaxPlayers = false,
     Map<String, DateTime>? voteTimes,
+    Map<String, int>? companions,
   }) =>
       Session(
         id: id,
@@ -583,6 +641,7 @@ class Session {
         voteDeadline: clearVoteDeadline ? null : (voteDeadline ?? this.voteDeadline),
         maxPlayers: clearMaxPlayers ? null : (maxPlayers ?? this.maxPlayers),
         voteTimes: voteTimes ?? this.voteTimes,
+        companions: companions ?? this.companions,
         createdAt: createdAt,
       );
 }
