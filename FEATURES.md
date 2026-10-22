@@ -94,7 +94,7 @@ Cài đặt trong app → Zalo Bot: token, tìm nhóm (@bot trong nhóm), webhoo
 | Deploy webhook | Push `main` → Vercel tự deploy; hoặc `npx vercel deploy --prod`. |
 | Biến môi trường Vercel | `ZALO_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `GEMINI_API_KEY`, `TEAM_ID`, `CRON_SECRET`, `PUBLIC_BASE_URL` (tuỳ chọn `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). |
 | Rules Firestore | `firebase deploy --only firestore:rules`. |
-| Test | `flutter test` (73 test: logic chia tiền, luồng Firestore giả lập, màn hình, điều hướng, lệnh Zalo; chạy được cả `--platform chrome`). Webhook có harness giả lập ngoại tuyến. |
+| Test | `flutter test`: test logic thuần (chia tiền, hạn vote/giới hạn/đính kèm, phân tích lệnh Zalo, nhập tiền). Không dùng Firestore giả lập. |
 
 ## 9. Giới hạn đã biết
 
