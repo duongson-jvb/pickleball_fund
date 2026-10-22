@@ -11,6 +11,16 @@ class DrinkChange {
   int apply(int current) => relative ? (current + qty).clamp(0, 999) : qty.clamp(0, 999);
 }
 
+/// Một phần việc ghi nước cho một người: [player] null = chính người gửi
+/// (hoặc không tìm thấy người được @ – xem [nameText]).
+class DrinkAssignment {
+  final Player? player;
+  final String nameText; // tên gõ trong tin (rỗng = tự mình)
+  final DrinkCommand command;
+  const DrinkAssignment(this.player, this.nameText, this.command);
+  bool get isSelf => nameText.isEmpty;
+}
+
 /// Kết quả phân tích lệnh nước.
 class DrinkCommand {
   final List<DrinkChange> changes;
@@ -128,6 +138,88 @@ class ZaloDrinks {
     }
     if (mine.isEmpty) out.remove(playerId);
     return out;
+  }
+
+  /// Tách tin có @mention người chơi thành từng phần việc:
+  ///   "N1 2 @An N2 1 @Nguyễn Văn Bình revive 2, suối 1"
+  /// → [tự mình: N1 2], [An: N2 1], [Nguyễn Văn Bình: revive 2, suối 1].
+  /// Tên người: khớp dài nhất với danh sách (không dấu, không phân biệt hoa thường);
+  /// không khớp thì lấy các từ đứng trước số/tên nước làm tên để báo lỗi.
+  static List<DrinkAssignment> parseMulti(
+    String text,
+    List<DrinkType> types,
+    List<Player> players, {
+    String botName = '',
+  }) {
+    var t = normalizeVi(text);
+    if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
+    t = t.replaceAll(RegExp(r'[.!?:;]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    final parts = t.split('@');
+    final out = <DrinkAssignment>[];
+    final head = parts.first.trim();
+    if (head.isNotEmpty && RegExp(r'\d').hasMatch(head)) {
+      out.add(DrinkAssignment(null, '', parse(head, types)));
+    }
+    for (final raw in parts.skip(1)) {
+      final seg = raw.trim();
+      if (seg.isEmpty) continue;
+      Player? best;
+      var bestLen = 0;
+      for (final p in players) {
+        final n = normalizeVi(p.name);
+        if (n.isEmpty) continue;
+        if ((seg == n || seg.startsWith('$n ')) && n.length > bestLen) {
+          best = p;
+          bestLen = n.length;
+        }
+      }
+      String nameText;
+      String rest;
+      if (best != null) {
+        nameText = best.name;
+        rest = seg.substring(bestLen).trim();
+      } else {
+        final tokens = seg.split(' ');
+        var i = 0;
+        while (i < tokens.length &&
+            !RegExp(r'\d').hasMatch(tokens[i]) &&
+            !_startsWithAlias(tokens.skip(i).join(' '), types)) {
+          i++;
+        }
+        nameText = tokens.take(i).join(' ');
+        rest = tokens.skip(i).join(' ');
+        best = _matchName(nameText, players);
+        // "@bot ..." (tên bot chưa lưu trong cài đặt) → lệnh cho chính người gửi.
+        if (best == null && (nameText == 'bot' || nameText.startsWith('bot '))) {
+          if (rest.isNotEmpty) out.add(DrinkAssignment(null, '', parse(rest, types)));
+          continue;
+        }
+      }
+      out.add(DrinkAssignment(best, nameText, parse(rest, types)));
+    }
+    return out;
+  }
+
+  static bool _startsWithAlias(String s, List<DrinkType> types) {
+    for (final d in types) {
+      for (final a in aliases(d)) {
+        if (s == a || s.startsWith('$a ')) return true;
+      }
+    }
+    return false;
+  }
+
+  /// Khớp tên người chơi: chính xác, hoặc khớp một phần nhưng duy nhất.
+  static Player? _matchName(String nameText, List<Player> players) {
+    final n = normalizeVi(nameText);
+    if (n.isEmpty) return null;
+    final exact = players.where((p) => normalizeVi(p.name) == n).toList();
+    if (exact.length == 1) return exact.first;
+    final partial = players.where((p) {
+      final pn = normalizeVi(p.name);
+      return pn.isNotEmpty && (pn.contains(n) || n.contains(pn));
+    }).toList();
+    return partial.length == 1 ? partial.first : null;
   }
 
   /// Các tên gọi (đã bỏ dấu) của một loại nước: tên đầy đủ, tên bỏ chữ "nước",

@@ -14,6 +14,7 @@ class ZaloCommands {
       '• Người mới cứ reply 1, bot tự thêm tên vào danh sách\n'
       '• Gõ "nước" để xem danh sách nước + mã (N1, N2...) và giá\n'
       '• Ghi nước: "N1 2" / "revive 2, suối 1" / "+1 N1" (cộng thêm)\n'
+      '• Nhập hộ: "@An N1 2 @Bình N2 1" (nhiều người một tin)\n'
       '• Xem quỹ, tiền sân, tiền nước: $appUrl\n'
       '• Gõ @bot help để xem lại tin này';
 
