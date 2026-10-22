@@ -1,8 +1,10 @@
 import '../models/models.dart';
+import '../utils/format.dart';
 import '../utils/text.dart';
 import 'team_store.dart';
 import 'zalo_bot_service.dart';
 import 'zalo_commands.dart';
+import 'zalo_drinks.dart';
 
 /// Kết quả một lần đồng bộ vote từ Zalo.
 class ZaloSyncResult {
@@ -10,6 +12,7 @@ class ZaloSyncResult {
   final List<String> appliedNames; // người đã cập nhật vote
   final List<String> createdNames; // người chơi vừa tự tạo từ Zalo
   final List<String> fullNames; // vote "đi" bị từ chối vì đã đủ người
+  final List<String> drinkNotes; // kết quả các lệnh ghi nước
   final int lateCount; // tin gửi sau hạn vote
   final int pendingCount; // tin chưa khớp được tên
   final int ignoredCount; // tin không thuộc nhóm / gửi trước khi tạo buổi / không phải vote
@@ -18,6 +21,7 @@ class ZaloSyncResult {
     this.appliedNames = const [],
     this.createdNames = const [],
     this.fullNames = const [],
+    this.drinkNotes = const [],
     this.lateCount = 0,
     this.pendingCount = 0,
     this.ignoredCount = 0,
@@ -111,6 +115,7 @@ class ZaloVoteSync {
     final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
     final createdNames = <String>[];
     final fullNames = <String>[]; // vote "đi" bị từ chối vì đã đủ người
+    final drinkNotes = <String>[]; // kết quả lệnh ghi nước
     var ignored = 0;
     var lateCount = 0; // tin gửi sau hạn vote
 
@@ -131,7 +136,21 @@ class ZaloVoteSync {
         continue;
       }
       final inScope = u.chatId == groupId || !u.isGroup || groupId.isEmpty;
-      if (!inScope || u.text.trim().isEmpty || u.date.isBefore(openedAt)) {
+      if (!inScope || u.text.trim().isEmpty) {
+        ignored++;
+        continue;
+      }
+
+      // Lệnh ghi nước ("nước 2", "revive 2, suối 1", "+1 revive") → ghi vào buổi
+      // gần nhất người đó tham gia, tính lại tiền, bot trả lời xác nhận.
+      if (ZaloDrinks.looksLikeDrink(u.text, store.drinkTypes, botName: settings.zaloBotName)) {
+        ignored++;
+        final note = await _handleDrink(store, u);
+        if (note != null) drinkNotes.add(note);
+        continue;
+      }
+
+      if (u.date.isBefore(openedAt)) {
         ignored++;
         continue;
       }
@@ -205,10 +224,74 @@ class ZaloVoteSync {
       appliedNames: applied,
       createdNames: createdNames,
       fullNames: fullNames,
+      drinkNotes: drinkNotes,
       lateCount: lateCount,
       pendingCount: pending.length,
       ignoredCount: ignored,
     );
+  }
+
+  /// Xử lý lệnh ghi nước từ một tin Zalo. Trả về dòng mô tả kết quả (hoặc null).
+  static Future<String?> _handleDrink(TeamStore store, ZaloUpdate u) async {
+    final settings = store.settings;
+    final player = matchPlayer(
+        zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
+    String reply;
+    String? note;
+    if (player == null) {
+      reply = '❓ ${u.fromName}: chưa có tên trong danh sách, báo quản lý thêm trước nhé.';
+      note = '${u.fromName}: chưa có trong danh sách';
+    } else {
+      final cmd = ZaloDrinks.parse(u.text, store.drinkTypes, botName: settings.zaloBotName);
+      final session = ZaloDrinks.pickSession(store.sessions, player.id, u.date);
+      if (!cmd.isValid) {
+        reply = '❓ ${player.name}: ${cmd.error ?? 'chưa hiểu'}. Ví dụ: "nước 2" hoặc "revive 2, suối 1".';
+        note = '${player.name}: lệnh nước không hiểu';
+      } else if (session == null) {
+        reply = '❓ ${player.name}: không tìm thấy buổi chơi gần đây bạn tham gia để ghi nước.';
+        note = '${player.name}: không có buổi để ghi nước';
+      } else {
+        // Người có vote "đi" nhưng chưa trong danh sách chơi (buổi đang vote) → thêm vào.
+        var target = session;
+        if (!target.playerIds.contains(player.id)) {
+          target = target.copyWith(playerIds: [...target.playerIds, player.id]);
+        }
+        // Đóng băng giá nước cho các loại chưa có giá trong buổi.
+        final prices = {...target.drinkPrices};
+        for (final c in cmd.changes) {
+          prices.putIfAbsent(
+              c.drinkTypeId, () => store.drinkTypeById(c.drinkTypeId)?.priceOn(target.date) ?? 0);
+        }
+        final drinks = ZaloDrinks.applyChanges(target.drinks, player.id, cmd.changes);
+        target = target.copyWith(drinks: drinks, drinkPrices: prices);
+        await store.repo.saveAndSettleSession(
+          target,
+          commonFundExcludingThis: store.commonFundExcluding(target.id),
+        );
+        final mine = drinks[player.id] ?? {};
+        var total = 0;
+        final parts = <String>[];
+        mine.forEach((id, q) {
+          final price = prices[id] ?? 0;
+          total += q * price;
+          parts.add('$q ${store.drinkTypeById(id)?.name ?? 'nước'}');
+        });
+        final label = target.title.isEmpty ? fmtDate(target.date) : target.title;
+        reply = parts.isEmpty
+            ? '✅ ${player.name}: đã xoá nước ở "$label".'
+            : '✅ ${player.name} ($label): ${parts.join(', ')} = ${vnd(total)}.';
+        note = '${player.name}: ${parts.isEmpty ? 'xoá nước' : parts.join(', ')}';
+      }
+    }
+    // Trả lời trong chat (nếu gửi được).
+    if (settings.hasZaloBot) {
+      try {
+        await ZaloBotService.forTeam(settings, store.repo.teamId).sendMessage(u.chatId, reply);
+      } catch (_) {
+        // Không gửi được thì thôi, dữ liệu đã ghi.
+      }
+    }
+    return note;
   }
 
   /// Ghi nhớ các chat (nhóm / riêng) bot từng nhận tin để người dùng chọn nhóm.

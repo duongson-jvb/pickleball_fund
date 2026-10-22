@@ -12,6 +12,7 @@ class ZaloCommands {
       '• Vote đi chơi: Reply tin vote của bot → 1 = đi, 0 = không\n'
       '• Đổi ý: reply lại là xong\n'
       '• Người mới cứ reply 1, bot tự thêm tên vào danh sách\n'
+      '• Ghi nước: "nước 2" hoặc "revive 2, suối 1" (+1 để cộng thêm)\n'
       '• Xem quỹ, tiền sân, tiền nước: $appUrl\n'
       '• Gõ @bot help để xem lại tin này';
 
