@@ -146,6 +146,101 @@ class ZaloVoteSync {
     return null;
   }
 
+  /// Các từ được phép trong một "đuôi vote" ("di", "khong di", "ok 2"...). Dùng để
+  /// tách tên người với phần vote trong tin vote hộ khi tên chưa có trong danh sách.
+  static const _voteVocab = {
+    'di', 'co', 'ok', 'oke', 'okie', 'okay', 'yes', 'y', 'tham', 'gia', 'join', 'choi',
+    'dk', 'dang', 'ky', 'chot', 'len', 'vao', 'count', 'me', 'khong', 'khg', 'hok',
+    'hong', 'hem', 'ko', 'k', 'no', 'nope', 'ban', 'nghi', 'bo', 'qua', 'huy', 'pass',
+    'x', 'nguoi', 'ng', 'suat', 'slot',
+  };
+
+  /// Phần [rest] (đã bỏ dấu) có phải là một vote gọn ("1", "0", "+1", "2 người",
+  /// "đi", "không đi", "ok 2") không. Câu dài hơn không được tính để tránh ghi
+  /// nhầm vote hộ từ câu nói thường.
+  static bool isVoteToken(String rest) {
+    final t = rest.trim();
+    if (t.isEmpty) return false;
+    if (RegExp(r'^[+\-\d.,\s]+$').hasMatch(t)) return true;
+    final words = t.split(' ');
+    if (words.length > 3) return false;
+    return words.every((w) => _voteVocab.contains(w) || RegExp(r'^\+?\d+$').hasMatch(w));
+  }
+
+  /// Tin còn @mention người khác (ngoài bot) không.
+  static bool mentionsOther(String text, {String botName = ''}) {
+    var t = normalizeVi(text);
+    if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
+    // Sau khi bỏ tên bot còn "@ 1" → không tính; chỉ tính "@" dính liền tên.
+    return RegExp(r'@\S').hasMatch(t);
+  }
+
+  /// Tách tin vote hộ: "@An 1 @Nguyễn Văn Bình 0" → [An: đi], [Bình: không đi];
+  /// "1 @An 2" → [tự mình: đi], [An: đi 2 suất]. Tên khớp dài nhất với danh sách
+  /// (không dấu, không phân biệt hoa thường). Trả null nếu KHÔNG phải tin vote hộ:
+  /// không có @tên kèm vote gọn, hoặc là câu hỏi ("@An đi không?").
+  static List<ProxyVote>? parseProxyVotes(String text, List<Player> players,
+      {String botName = ''}) {
+    var t = normalizeVi(text);
+    if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
+    if (t.contains('?')) return null;
+    t = t.replaceAll(RegExp(r'[.!:;]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (!t.contains('@')) return null;
+    final parts = t.split('@');
+    final out = <ProxyVote>[];
+    final head = parts.first.trim();
+    if (head.isNotEmpty) {
+      if (!isVoteToken(head)) return null; // phần đầu là câu nói → không phải vote hộ
+      out.add(ProxyVote(null, '', readVote(head)));
+    }
+    var valid = 0;
+    for (final raw in parts.skip(1)) {
+      final seg = raw.trim();
+      if (seg.isEmpty) continue;
+      Player? best;
+      var bestLen = 0;
+      for (final p in players) {
+        final n = normalizeVi(p.name);
+        if (n.isEmpty) continue;
+        if ((seg == n || seg.startsWith('$n ')) && n.length > bestLen) {
+          best = p;
+          bestLen = n.length;
+        }
+      }
+      String nameText;
+      String rest;
+      if (best != null) {
+        nameText = best.name;
+        rest = seg.substring(bestLen).trim();
+      } else {
+        // Tên = các từ đứng trước đuôi vote gọn đầu tiên.
+        final tokens = seg.split(' ');
+        var i = 1;
+        while (i < tokens.length && !isVoteToken(tokens.skip(i).join(' '))) {
+          i++;
+        }
+        nameText = tokens.take(i).join(' ');
+        rest = tokens.skip(i).join(' ');
+        // "@bot 1" (tên bot chưa lưu trong cài đặt) → vote của chính người gửi.
+        if (nameText == 'bot' || nameText.startsWith('bot ')) {
+          if (isVoteToken(rest)) {
+            out.add(ProxyVote(null, '', readVote(rest)));
+            valid++;
+          }
+          continue;
+        }
+      }
+      if (!isVoteToken(rest)) {
+        out.add(ProxyVote(best, nameText,
+            VoteReading(null, error: 'chưa hiểu "$seg". Gõ "@Tên 1" (đi), "@Tên 0" (không đi), "@Tên 2" (đi 2 người).')));
+        continue;
+      }
+      out.add(ProxyVote(best, nameText, readVote(rest)));
+      valid++;
+    }
+    return valid == 0 ? null : out;
+  }
+
   /// Chọn buổi để nhận vote: buổi đang vote gần nhất trong tương lai,
   /// nếu không có thì buổi đang vote mới nhất.
   static Session? pickTarget(List<Session> sessions) {
@@ -287,57 +382,105 @@ class ZaloVoteSync {
         lateCount++;
         continue;
       }
-      final reading = readVote(u.text, botName: settings.zaloBotName);
-      // Gõ số sai ("10", "01", "1,2,3"...) → báo lại, không tính vote.
-      if (reading.isError) {
-        ignored++;
-        await _reply(store, u.chatId, reading.error!);
-        continue;
-      }
-      final vote = reading.vote;
-      var player = matchPlayer(
+      var sender = matchPlayer(
           zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
       // Người vừa được tự tạo trong cùng đợt (stream chưa kịp cập nhật).
-      if (player == null && u.fromId.isNotEmpty && created.containsKey(u.fromId)) {
-        player = created[u.fromId];
+      if (sender == null && u.fromId.isNotEmpty && created.containsKey(u.fromId)) {
+        sender = created[u.fromId];
+      }
+      // Vote hộ: "@An 1 @Bình 0" (phần trước @ đầu tiên là của chính người gửi).
+      // Không phải vote hộ → một phần duy nhất: vote của người gửi.
+      final proxy =
+          parseProxyVotes(u.text, store.activePlayers, botName: settings.zaloBotName);
+      // Có @người khác mà không phải vote hộ ("@An đi không?") → câu nói với người
+      // đó, không phải vote của người gửi.
+      if (proxy == null && mentionsOther(u.text, botName: settings.zaloBotName)) {
+        ignored++;
+        continue;
+      }
+      final parts = proxy ??
+          [ProxyVote(null, '', readVote(u.text, botName: settings.zaloBotName))];
+      final lines = <String>[]; // trả lời cho tin này
+      final label = session.title.isEmpty ? 'buổi chơi' : '"${session.title}"';
+      final cap = session.maxPlayers != null ? '/${session.maxPlayers}' : '';
+      int seatsNow() {
+        var n = 0;
+        votes.forEach((pid, v) {
+          if (v) n += 1 + (companions[pid] ?? 0);
+        });
+        return n;
       }
 
-      // Số suất: "2" = đi kèm 1 người đính kèm. Kiểm tra chỗ còn trống (tính cả
-      // đính kèm). Người đã "đi" chỉ bị chặn nếu xin THÊM suất mà không còn chỗ.
-      final count = vote == true ? reading.seats : 0;
-      if (vote == true && session.maxPlayers != null) {
-        var seats = 0;
-        votes.forEach((pid, v) {
-          if (v) seats += 1 + (companions[pid] ?? 0);
-        });
-        final mine = (player != null && votes[player.id] == true) ? 1 + (companions[player.id] ?? 0) : 0;
-        if (seats - mine + count > session.maxPlayers!) {
-          fullNames.add('${player?.name ?? u.fromName}${count > 1 ? ' ($count suất)' : ''}');
+      for (final a in parts) {
+        final reading = a.reading;
+        final who = a.isSelf ? (sender?.name ?? u.fromName) : (a.player?.name ?? a.nameText);
+        // Gõ số sai ("10", "01", "1,2,3"...) → báo lại, không tính vote.
+        if (reading.isError) {
           ignored++;
-          // Webhook (nếu có) mới chỉ báo "đã nhận" cho người chưa có tên → phải báo hết chỗ.
-          final left = session.maxPlayers! - (seats - mine);
-          await _send(store, u.chatId,
-              '😢 ${player?.name ?? u.fromName}: buổi chỉ còn $left chỗ (giới hạn ${session.maxPlayers}), '
-              'em chưa ghi được $count suất.${left > 0 ? ' Reply "$left" để giữ $left chỗ nhé.' : ''}');
+          if (proxy == null) {
+            await _reply(store, u.chatId, reading.error!);
+          } else {
+            lines.add('❓ $who: ${reading.error}');
+          }
           continue;
         }
-      }
+        final vote = reading.vote;
+        if (vote == null) {
+          // Câu nói thường ("anh Sơn bảo anh oke rồi em") → không phải vote, bỏ qua.
+          ignored++;
+          continue;
+        }
+        var player = a.isSelf ? sender : a.player;
+        if (!a.isSelf && player == null) {
+          ignored++;
+          lines.add('❓ Không tìm thấy người chơi "${a.nameText}". Thêm họ trong app rồi vote hộ lại nhé.');
+          continue;
+        }
 
-      // Người reply vote rõ nghĩa nhưng chưa có trong danh sách → tự thêm người chơi.
-      if (player == null && vote != null && u.fromId.isNotEmpty) {
-        final id = await store.repo.addPlayerFromZalo(zaloId: u.fromId, zaloName: u.fromName);
-        player = Player(
-          id: id,
-          name: u.fromName.trim().isEmpty ? 'Zalo ${u.fromId}' : u.fromName.trim(),
-          zaloId: u.fromId,
-          zaloName: u.fromName,
-          createdAt: DateTime.now(),
-        );
-        created[u.fromId] = player;
-        createdNames.add(player.name);
-      }
+        // Số suất: "2" = đi kèm 1 người đính kèm. Kiểm tra chỗ còn trống (tính cả
+        // đính kèm). Người đã "đi" chỉ bị chặn nếu xin THÊM suất mà không còn chỗ.
+        final count = vote ? reading.seats : 0;
+        if (vote && session.maxPlayers != null) {
+          final seats = seatsNow();
+          final mine = (player != null && votes[player.id] == true)
+              ? 1 + (companions[player.id] ?? 0)
+              : 0;
+          if (seats - mine + count > session.maxPlayers!) {
+            fullNames.add('$who${count > 1 ? ' ($count suất)' : ''}');
+            ignored++;
+            final left = session.maxPlayers! - (seats - mine);
+            lines.add('😢 $who: $label chỉ còn $left chỗ (giới hạn ${session.maxPlayers}), '
+                'em chưa ghi được $count suất.${left > 0 ? ' Reply "$left" để giữ $left chỗ nhé.' : ''}');
+            continue;
+          }
+        }
 
-      if (player != null && vote != null) {
+        // Người reply vote rõ nghĩa nhưng chưa có trong danh sách → tự thêm người chơi.
+        if (player == null && u.fromId.isNotEmpty) {
+          final id = await store.repo.addPlayerFromZalo(zaloId: u.fromId, zaloName: u.fromName);
+          player = Player(
+            id: id,
+            name: u.fromName.trim().isEmpty ? 'Zalo ${u.fromId}' : u.fromName.trim(),
+            zaloId: u.fromId,
+            zaloName: u.fromName,
+            createdAt: DateTime.now(),
+          );
+          created[u.fromId] = player;
+          createdNames.add(player.name);
+          sender = player;
+        }
+        if (player == null) {
+          // Chỉ xếp vào "chờ gán" khi tin thật sự là vote mà chưa khớp được người.
+          pending[u.fromId.isEmpty ? u.messageId : u.fromId] = ZaloPendingVote(
+            zaloId: u.fromId,
+            name: u.fromName,
+            text: u.text,
+            vote: vote,
+            date: u.date,
+          );
+          continue;
+        }
+
         votes[player.id] = vote;
         voteTimes[player.id] = u.date;
         // Người đính kèm: "2" → 1 đính kèm; vote không đi hoặc "1" → bỏ đính kèm.
@@ -346,40 +489,24 @@ class ZaloVoteSync {
         } else {
           companions.remove(player.id);
         }
-        pending.remove(u.fromId);
+        if (a.isSelf) pending.remove(u.fromId);
         if (!applied.contains(player.name)) applied.add(player.name);
         // Xác nhận cho người vote (ở chế độ webhook, chỉ người mới được tự thêm
-        // mới tới đây; người đã có trong danh sách được webhook xác nhận ngay).
-        var seatsNow = 0;
-        votes.forEach((pid, v) {
-          if (v) seatsNow += 1 + (companions[pid] ?? 0);
-        });
-        final cap = session.maxPlayers != null ? '/${session.maxPlayers}' : '';
-        final label = session.title.isEmpty ? 'buổi chơi' : '"${session.title}"';
-        confirmations.putIfAbsent(u.chatId, () => []).add(vote
-            ? '✅ ${player.name}${count > 1 ? ' (+${count - 1} đính kèm)' : ''}: đi $label · đã có $seatsNow$cap suất.'
+        // hoặc tin webhook ghi lỗi mới tới đây; còn lại webhook đã xác nhận ngay).
+        final by = a.isSelf ? '' : ' (${sender?.name ?? u.fromName} vote hộ)';
+        lines.add(vote
+            ? '✅ ${player.name}${count > 1 ? ' (+${count - 1} đính kèm)' : ''}: đi $label$by · đã có ${seatsNow()}$cap suất.'
                 '${createdNames.contains(player.name) ? ' Đã thêm vào danh sách người chơi.' : ''}'
-            : '👌 ${player.name}: không đi $label · còn $seatsNow$cap suất.');
+            : '👌 ${player.name}: không đi $label$by · còn ${seatsNow()}$cap suất.');
         // Ghi nhớ Zalo id để lần sau khớp chính xác.
-        if (player.zaloId != u.fromId && u.fromId.isNotEmpty) {
+        if (a.isSelf && player.zaloId != u.fromId && u.fromId.isNotEmpty) {
           await store.repo.updatePlayer(player.id, {
             'zaloId': u.fromId,
             'zaloName': u.fromName,
           });
         }
-      } else if (vote != null) {
-        // Chỉ xếp vào "chờ gán" khi tin thật sự là vote mà chưa khớp được người.
-        pending[u.fromId.isEmpty ? u.messageId : u.fromId] = ZaloPendingVote(
-          zaloId: u.fromId,
-          name: u.fromName,
-          text: u.text,
-          vote: vote,
-          date: u.date,
-        );
-      } else {
-        // Câu nói thường ("anh Sơn bảo anh oke rồi em") → không phải vote, bỏ qua.
-        ignored++;
       }
+      if (lines.isNotEmpty) confirmations.putIfAbsent(u.chatId, () => []).addAll(lines);
     }
 
     if (session != null &&
@@ -395,12 +522,12 @@ class ZaloVoteSync {
         ...companionUpdates,
         'zaloPending': pending.values.map((e) => e.toMap()).toList(),
       });
-      // Báo lại cho người vote: điểm danh thành công thì không được im lặng.
-      // Gửi cả ở chế độ webhook, vì webhook mới chỉ báo "đã nhận" (người chưa có
-      // tên / ghi lỗi) chứ chưa xác nhận đã ghi vote.
-      for (final e in confirmations.entries) {
-        await _send(store, e.key, e.value.join('\n'));
-      }
+    }
+    // Báo lại cho người vote: điểm danh thành công thì không được im lặng.
+    // Gửi cả ở chế độ webhook, vì webhook mới chỉ báo "đã nhận" (người chưa có
+    // tên / ghi lỗi) chứ chưa xác nhận đã ghi vote.
+    for (final e in confirmations.entries) {
+      await _send(store, e.key, e.value.join('\n'));
     }
     return ZaloSyncResult(
       target: session,
@@ -601,4 +728,16 @@ class VoteReading {
   const VoteReading(this.vote, {this.seats = 0, this.error});
 
   bool get isError => error != null;
+}
+
+/// Một phần của tin vote (hộ): "@An 1" → người An, đi 1 suất.
+class ProxyVote {
+  /// Người được vote; null = không tìm thấy (xem [nameText]) hoặc chính người gửi.
+  final Player? player;
+
+  /// Tên gõ trong tin; rỗng = vote của chính người gửi.
+  final String nameText;
+  final VoteReading reading;
+  const ProxyVote(this.player, this.nameText, this.reading);
+  bool get isSelf => nameText.isEmpty;
 }

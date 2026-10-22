@@ -119,6 +119,7 @@ state.players = [player('p-an', 'An', AN), player('p-binh', 'Bình', BINH), play
 console.log('— Có buổi đang mở vote (giới hạn 4) —');
 state.sessions = [sessionDoc({ max: 4, votes: { 'p-binh': true }, companions: { 'p-binh': 1 } })];
 await check('vote "1" (người đã biết)', { text: '1' }, { reply: '✅ An: đi', patched: true });
+await check('vote "@Bot PickleBall JVB 1" (mention bot)', { text: '@Bot PickleBall JVB 1' }, { reply: '✅ An: đi', patched: true });
 const r2 = await check('vote "2" (kèm 1)', { text: '2' }, { reply: '+1 đính kèm', patched: true });
 // id người chơi có dấu "-" → field path trong updateMask phải bọc backtick (`p-an`).
 if (!r2.patched.every((p) => p.url.includes(encodeURIComponent('votes.`p-an`')))) {
@@ -130,6 +131,21 @@ state.patchFail = false;
 await check('vote "0"', { text: '0' }, { reply: '👌 An: không đi', patched: true });
 await check('vote "3" vượt chỗ (còn 2)', { text: '3' }, { reply: 'chỉ còn 2 chỗ' });
 await check('vote câu ngắn "cho em đi với"', { text: 'cho em đi với' }, { reply: '✅ An: đi', patched: true });
+const TUNG = { id: 'z9', display_name: 'Tùng' };
+const px = await check('vote hộ "@An 1" (Tùng vote hộ)', { text: '@Bot PickleBall JVB @An 1', from: TUNG }, { reply: '✅ An: đi "Thứ 7" (Tùng vote hộ)', patched: true });
+if (!px.sent.join('\n').includes('Tùng')) { fails++; log.push('SAI  vote hộ phải ghi tên người vote hộ'); }
+const px2 = await check('vote hộ nhiều người "@Bình 0 @An 2"', { text: '@Bình 0 @An 2', from: TUNG }, { reply: '👌 Bình: không đi', patched: true });
+if (!px2.sent.join('\n').includes('An (+1 đính kèm)')) { fails++; log.push('SAI  vote hộ "@An 2" phải ra +1 đính kèm'); }
+if (!(px2.patched.length === 1 && px2.patched[0].url.includes('p-binh') && px2.patched[0].url.includes('p-an'))) { fails++; log.push('SAI  vote hộ nhiều người phải ghi trong MỘT lần PATCH'); }
+await check('vote hộ + tự vote "1 @An 0"', { text: '1 @An 0', from: TUNG }, { reply: '✅ Tùng: đi', patched: true });
+await check('vote hộ tên lạ', { text: '@Người Lạ 1', from: TUNG }, { reply: 'Không tìm thấy người chơi "nguoi la"' });
+await check('vote hộ số sai "@An 10"', { text: '@An 10', from: TUNG }, { reply: 'Em chưa hiểu' });
+await check('vote hộ vượt chỗ "@An 3" (còn 2)', { text: '@An 3', from: TUNG }, { reply: 'chỉ còn 2 chỗ' });
+await check('"@An đi không?" là câu hỏi → AI', { text: '@An đi không?', from: TUNG }, { reply: 'Dạ em đây' });
+await check('"@An mai đi sớm nhé" là câu nói → AI', { text: '@An mai đi sớm nhé anh ơi', from: TUNG }, { reply: 'Dạ em đây' });
+const px3 = await check('người lạ tự vote + vote hộ "1 @An 1"', { text: '1 @An 1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: '✅ An: đi', inbox: true, patched: true });
+if (!(px3.saved.length === 1 && px3.saved[0] === '1')) { fails++; log.push(`SAI  hộp thư chỉ được chứa phần tự vote "1", đang là ${JSON.stringify(px3.saved)}`); }
+if (!px3.sent.join('\n').includes('chưa có trong danh sách')) { fails++; log.push('SAI  phải báo người gửi chưa có tên'); }
 await check('khớp theo tên hiển thị', { text: '1', from: { id: 'z9', display_name: 'Tùng' } }, { reply: '✅ Tùng: đi', patched: true });
 await check('người lạ vote → hộp thư + báo', { text: '1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: 'chưa có trong danh sách', inbox: true });
 await check('số sai "10"', { text: '10' }, { reply: 'Em chưa hiểu' });

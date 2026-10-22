@@ -143,15 +143,9 @@ export default {
       return replyText(env, teamId, chat, EMPTY_MENTION_TEXT, token);
     }
 
-    const voteShape = readVoteShape(text, botName);
+    let voteShape = readVoteShape(text, botName);
     // Lệnh ghi nước cũng chứa từ khoá vote ("+1 N1", "N1 0") → không phải vote.
     const isDrinkCommand = /\d/.test(cleaned) && hasDrinkMarker(cleaned, await drinkAliases(env, teamId));
-
-    // Gõ số sai ("10", "01", "0.1", "1,2,3"...) → báo lại ngay, không tính vote.
-    if (!isDrinkCommand && voteShape.error) {
-      console.log(`vote sai cu phap: "${text.slice(0, 40)}"`);
-      return replyText(env, teamId, chat, voteShape.error, token);
-    }
 
     const messageId = String(msg.message_id || crypto.randomUUID());
     const dateMs = typeof msg.date === 'number'
@@ -169,6 +163,57 @@ export default {
       receivedAt: { timestampValue: new Date().toISOString() },
     };
 
+    // ---- Vote hộ: "@An 1 @Bình 0" (phần trước @ đầu tiên là của chính người gửi).
+    if (!isDrinkCommand && hasOtherMention(text, botName)) {
+      const players = await loadPlayers(env, teamId);
+      const proxy = parseProxyVotesJs(text, botName, players);
+      if (proxy) {
+        const open = await openVoteSession(env, teamId);
+        if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token);
+        if (open.expired) return replyText(env, teamId, chat, expiredText(open), token);
+        const sender = matchPlayerJs(players, fromId, fromName);
+        const lines = [];
+        const entries = [];
+        let selfUnknown = null;
+        for (const a of proxy) {
+          const who = a.isSelf ? (sender?.name || fromName || 'bạn') : (a.player?.name || a.nameText);
+          if (a.error) { lines.push(a.isSelf ? a.error : `❓ ${who}: ${a.error}`); continue; }
+          if (a.isSelf) {
+            if (!sender) { selfUnknown = a; continue; }
+            entries.push({ player: sender, vote: a.vote, seats: a.seats, by: '' });
+          } else if (!a.player) {
+            lines.push(`❓ Không tìm thấy người chơi "${a.nameText}". Thêm họ trong app rồi vote hộ lại nhé.`);
+          } else {
+            entries.push({ player: a.player, vote: a.vote, seats: a.seats, by: sender?.name || fromName });
+          }
+        }
+        let r = { status: 'none', lines: [] };
+        if (entries.length) r = await recordVotes(env, teamId, open, entries, dateMs);
+        lines.push(...r.lines);
+        console.log(`vote hộ (${entries.length}) → ${r.status}`);
+        const writeFailed = !['recorded', 'full', 'none'].includes(r.status);
+        if (writeFailed) {
+          const saved = await saveInbox(env, teamId, messageId, inboxFields); // app ghi hộ toàn bộ
+          if (!saved.ok) return saved.response;
+        } else if (selfUnknown) {
+          // Chỉ phần vote của chính người gửi (chưa có tên) vào hộp thư, tránh ghi lặp.
+          const saved = await saveInbox(env, teamId, messageId, { ...inboxFields, text: s(selfUnknown.rawText) });
+          if (!saved.ok) return saved.response;
+          lines.push(`📝 Em đã nhận vote của ${fromName || 'bạn'}. Tên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`);
+        }
+        return replyText(env, teamId, chat, lines.join('\n'), token);
+      }
+      // Có @người khác mà không phải vote hộ ("@An đi không?") → câu nói với người
+      // đó, không phải vote của người gửi → để AI trả lời.
+      voteShape = { ...voteShape, definite: false, error: null };
+    }
+
+    // Gõ số sai ("10", "01", "0.1", "1,2,3"...) → báo lại ngay, không tính vote.
+    if (!isDrinkCommand && voteShape.error) {
+      console.log(`vote sai cu phap: "${text.slice(0, 40)}"`);
+      return replyText(env, teamId, chat, voteShape.error, token);
+    }
+
     // ---- Lệnh ghi nước: app (máy quản trị) mới ghi được → vào hộp thư + báo đã nhận.
     if (isDrinkCommand) {
       const saved = await saveInbox(env, teamId, messageId, inboxFields);
@@ -181,11 +226,7 @@ export default {
     if (voteShape.definite) {
       const open = await openVoteSession(env, teamId);
       if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token);
-      if (open.expired) {
-        return replyText(env, teamId, chat,
-          `⏰ ${open.title ? `Buổi "${open.title}"` : 'Buổi chơi'} đã hết hạn vote lúc ` +
-          `${fmtDateTime(open.deadline)}, vote này không được tính. Báo quản lý nếu cần nhé!`, token);
-      }
+      if (open.expired) return replyText(env, teamId, chat, expiredText(open), token);
       const players = await loadPlayers(env, teamId);
       const player = matchPlayerJs(players, fromId, fromName);
       if (!player) {
@@ -195,7 +236,7 @@ export default {
         return replyText(env, teamId, chat,
           `📝 Em đã nhận vote của ${fromName || 'bạn'}. Tên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`, token);
       }
-      const r = await recordVote(env, teamId, open, player, voteShape, dateMs, players);
+      const r = await recordVote(env, teamId, open, player, voteShape, dateMs);
       console.log(`vote → ${player.name}: ${r.status}`);
       // Không ghi được ngay (lỗi token/Firestore) → đưa vào hộp thư để app ghi hộ.
       if (r.status !== 'recorded' && r.status !== 'full') {
@@ -244,7 +285,7 @@ const APP_URL = 'https://duongson-jvb.github.io/pickleball_fund/';
 
 const HELP_TEXT = [
   '🏓 Bot Quỹ Pickleball',
-  '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4 · gõ "vote" xem buổi đang mở',
+  '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4 · "@An 1" vote hộ · gõ "vote" xem buổi đang mở',
   '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
   '• Quỹ: "quỹ" xem số dư cả nhóm',
   '• Hỏi gì cứ @bot, em trả lời',
@@ -552,55 +593,170 @@ function readVoteValue(text, botName) {
   return { vote: true, seats };
 }
 
-/** Ghi vote vào buổi bằng Firestore REST (token ẩn danh, rules cho phép votes/voteTimes/companions). */
-async function recordVote(env, teamId, sess, player, voteShape, dateMs, players) {
-  const { vote, seats } = readVoteValue(voteShape.original || '', voteShape.botName || '');
-  const pid = player.id;
-  const label = sess.title ? `"${sess.title}"` : 'buổi chơi';
-  // Kiểm tra chỗ (tính cả đính kèm).
-  if (vote && sess.maxPlayers != null) {
-    const taken = seatsTaken(sess);
-    const mine = sess.votes[pid] ? 1 + (sess.companions[pid] || 0) : 0;
-    if (taken - mine + seats > sess.maxPlayers) {
-      const left = Math.max(0, sess.maxPlayers - (taken - mine));
-      return { status: 'full', text: `😢 ${player.name}: ${label} chỉ còn ${left} chỗ (giới hạn ${sess.maxPlayers}), em chưa ghi được ${seats} suất. ` +
-        (left > 0 ? `Reply "${left}" để giữ ${left} chỗ nhé.` : 'Báo quản lý nếu cần thêm chỗ nhé.') };
-    }
-  }
-  const idToken = await getBotIdToken(env);
-  if (!idToken) return { status: 'no-auth', text: `📝 Em đã nhận vote của ${player.name}, sẽ cập nhật khi quản lý mở app.` };
+function expiredText(open) {
+  return `⏰ ${open.title ? `Buổi "${open.title}"` : 'Buổi chơi'} đã hết hạn vote lúc ` +
+    `${fmtDateTime(open.deadline)}, vote này không được tính. Báo quản lý nếu cần nhé!`;
+}
 
-  const fields = {
-    votes: { mapValue: { fields: { [pid]: { booleanValue: vote } } } },
-    voteTimes: { mapValue: { fields: { [pid]: { timestampValue: new Date(dateMs).toISOString() } } } },
-  };
-  if (vote && seats > 1) fields.companions = { mapValue: { fields: { [pid]: { integerValue: String(seats - 1) } } } };
+function fieldSeg(pid) {
   // Đoạn id trong field path bọc backtick để id có ký tự lạ ("-", ":") vẫn hợp lệ.
-  const seg = /^[A-Za-z_][A-Za-z0-9_]*$/.test(pid) ? pid : '`' + pid.replace(/`/g, '\\`') + '`';
-  const mask = [`votes.${seg}`, `voteTimes.${seg}`, `companions.${seg}`]
-    .map((m) => `updateMask.fieldPaths=${encodeURIComponent(m)}`).join('&');
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(pid) ? pid : '`' + pid.replace(/`/g, '\\`') + '`';
+}
+
+/** Ghi vote vào buổi bằng Firestore REST (token ẩn danh, rules cho phép votes/voteTimes/companions). */
+async function recordVote(env, teamId, sess, player, voteShape, dateMs) {
+  const { vote, seats } = readVoteValue(voteShape.original || '', voteShape.botName || '');
+  const r = await recordVotes(env, teamId, sess, [{ player, vote, seats, by: '' }], dateMs);
+  return { status: r.status, text: r.lines.join('\n') };
+}
+
+/**
+ * Ghi một loạt vote (của người gửi và/hoặc vote hộ) trong MỘT lần PATCH.
+ * entries: [{ player, vote, seats, by }] – by = tên người vote hộ ('' = tự vote).
+ * Trả { status, lines }: status 'recorded' | 'full' (không ai ghi được vì hết chỗ)
+ * | 'no-auth' | 'error-<mã>'.
+ */
+async function recordVotes(env, teamId, sess, entries, dateMs) {
+  const label = sess.title ? `"${sess.title}"` : 'buổi chơi';
+  const cap = sess.maxPlayers != null ? `/${sess.maxPlayers}` : '';
+  const votes = { ...sess.votes };
+  const companions = { ...sess.companions };
+  const lines = [];
+  const accepted = [];
+  for (const e of entries) {
+    const pid = e.player.id;
+    const mine = votes[pid] ? 1 + (companions[pid] || 0) : 0;
+    if (e.vote && sess.maxPlayers != null) {
+      const taken = seatsTaken({ votes, companions });
+      if (taken - mine + e.seats > sess.maxPlayers) {
+        const left = Math.max(0, sess.maxPlayers - (taken - mine));
+        lines.push(`😢 ${e.player.name}: ${label} chỉ còn ${left} chỗ (giới hạn ${sess.maxPlayers}), em chưa ghi được ${e.seats} suất. ` +
+          (left > 0 ? `Reply "${left}" để giữ ${left} chỗ nhé.` : 'Báo quản lý nếu cần thêm chỗ nhé.'));
+        continue;
+      }
+    }
+    votes[pid] = e.vote;
+    if (e.vote && e.seats > 1) companions[pid] = e.seats - 1; else delete companions[pid];
+    const after = seatsTaken({ votes, companions });
+    const by = e.by ? ` (${e.by} vote hộ)` : '';
+    const who = `${e.player.name}${e.vote && e.seats > 1 ? ` (+${e.seats - 1} đính kèm)` : ''}`;
+    accepted.push({ ...e, text: e.vote
+      ? `✅ ${who}: đi ${label}${by} · đã có ${after}${cap} suất.${e.by ? '' : ' Đổi ý thì reply lại nhé!'}`
+      : `👌 ${e.player.name}: không đi ${label}${by} · còn ${after}${cap} suất.` });
+  }
+  if (!accepted.length) return { status: 'full', lines };
+
+  const idToken = await getBotIdToken(env);
+  const names = accepted.map((e) => e.player.name).join(', ');
+  if (!idToken) {
+    return { status: 'no-auth', lines: [...lines, `📝 Em đã nhận vote của ${names}, sẽ cập nhật khi quản lý mở app.`] };
+  }
+  const fields = { votes: { mapValue: { fields: {} } }, voteTimes: { mapValue: { fields: {} } }, companions: { mapValue: { fields: {} } } };
+  const mask = [];
+  for (const e of accepted) {
+    const pid = e.player.id;
+    fields.votes.mapValue.fields[pid] = { booleanValue: e.vote };
+    fields.voteTimes.mapValue.fields[pid] = { timestampValue: new Date(dateMs).toISOString() };
+    if (e.vote && e.seats > 1) fields.companions.mapValue.fields[pid] = { integerValue: String(e.seats - 1) };
+    const seg = fieldSeg(pid);
+    mask.push(`votes.${seg}`, `voteTimes.${seg}`, `companions.${seg}`);
+  }
+  if (!Object.keys(fields.companions.mapValue.fields).length) delete fields.companions;
+  const qs = mask.map((m) => `updateMask.fieldPaths=${encodeURIComponent(m)}`).join('&');
   const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents` +
-    `/teams/${encodeURIComponent(teamId)}/sessions/${encodeURIComponent(sess.id)}?${mask}`;
+    `/teams/${encodeURIComponent(teamId)}/sessions/${encodeURIComponent(sess.id)}?${qs}`;
   const res = await fetch(url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
     body: JSON.stringify({ fields }),
   });
   if (!res.ok) {
-    console.log('recordVote failed', res.status, (await res.text()).slice(0, 300));
-    return { status: `error-${res.status}`, text: `📝 Em đã nhận vote của ${player.name} nhưng chưa ghi được ngay, quản lý mở app là em cập nhật.` };
+    console.log('recordVotes failed', res.status, (await res.text()).slice(0, 300));
+    return { status: `error-${res.status}`, lines: [...lines,
+      `📝 Em đã nhận vote của ${names} nhưng chưa ghi được ngay, quản lý mở app là em cập nhật.`] };
   }
-  // Tính lại số chỗ sau khi ghi.
-  const votes = { ...sess.votes, [pid]: vote };
-  const companions = { ...sess.companions };
-  if (vote && seats > 1) companions[pid] = seats - 1; else delete companions[pid];
-  const after = seatsTaken({ votes, companions });
-  const cap = sess.maxPlayers != null ? `/${sess.maxPlayers}` : '';
-  const who = `${player.name}${vote && seats > 1 ? ` (+${seats - 1} đính kèm)` : ''}`;
-  const text = vote
-    ? `✅ ${who}: đi ${label} · đã có ${after}${cap} suất. Đổi ý thì reply lại nhé!`
-    : `👌 ${player.name}: không đi ${label} · còn ${after}${cap} suất.`;
-  return { status: 'recorded', text };
+  return { status: 'recorded', lines: [...lines, ...accepted.map((e) => e.text)] };
+}
+
+// ------------------------------------------------------------ vote hộ
+const VOTE_VOCAB = new Set(['di', 'co', 'ok', 'oke', 'okie', 'okay', 'yes', 'y', 'tham', 'gia', 'join', 'choi',
+  'dk', 'dang', 'ky', 'chot', 'len', 'vao', 'count', 'me', 'khong', 'khg', 'hok', 'hong', 'hem', 'ko', 'k',
+  'no', 'nope', 'ban', 'nghi', 'bo', 'qua', 'huy', 'pass', 'x', 'nguoi', 'ng', 'suat', 'slot']);
+
+/** Đuôi vote gọn: "1", "0", "+1", "2 người", "đi", "không đi", "ok 2" (≤ 3 từ, toàn từ khoá). */
+function isVoteToken(rest) {
+  const t = rest.trim();
+  if (!t) return false;
+  if (/^[+\-\d.,\s]+$/.test(t)) return true;
+  const words = t.split(' ');
+  if (words.length > 3) return false;
+  return words.every((w) => VOTE_VOCAB.has(w) || /^\+?\d+$/.test(w));
+}
+
+/** Tin còn @mention người khác (ngoài bot) không. */
+function hasOtherMention(text, botName) {
+  let t = normalizeVi(text);
+  if (botName) t = t.split(normalizeVi(botName)).join(' ');
+  return /@\S/.test(t); // bỏ tên bot còn "@ 1" → không tính
+}
+
+/**
+ * Tách tin vote hộ (khớp ZaloVoteSync.parseProxyVotes bên app):
+ * "@An 1 @Nguyễn Văn Bình 0" → [{player An, vote true, seats 1}, {player Bình, vote false}];
+ * phần trước @ đầu tiên (nếu có) là vote của chính người gửi (isSelf).
+ * Trả null nếu không phải vote hộ (không có @tên kèm vote gọn, hoặc là câu hỏi).
+ */
+function parseProxyVotesJs(text, botName, players) {
+  let t = normalizeVi(text);
+  if (botName) t = t.split(normalizeVi(botName)).join(' ');
+  if (t.includes('?')) return null;
+  t = t.replace(/[.!:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t.includes('@')) return null;
+  const parts = t.split('@');
+  const out = [];
+  const mk = (player, nameText, rest, rawText) => {
+    const shape = readVoteShapeInner(rest, rest);
+    if (shape.error) return { player, nameText, isSelf: !nameText, error: shape.error, rawText };
+    const v = readVoteValue(rest, '');
+    return { player, nameText, isSelf: !nameText, vote: v.vote, seats: v.seats, error: null, rawText };
+  };
+  const head = parts[0].trim();
+  if (head) {
+    if (!isVoteToken(head)) return null; // phần đầu là câu nói → không phải vote hộ
+    out.push(mk(null, '', head, head));
+  }
+  let valid = 0;
+  for (const raw of parts.slice(1)) {
+    const seg = raw.trim();
+    if (!seg) continue;
+    let best = null, bestLen = 0;
+    for (const p of players) {
+      const n = normalizeVi(p.name);
+      if (n && (seg === n || seg.startsWith(n + ' ')) && n.length > bestLen) { best = p; bestLen = n.length; }
+    }
+    let nameText, rest;
+    if (best) {
+      nameText = best.name; rest = seg.slice(bestLen).trim();
+    } else {
+      const tokens = seg.split(' ');
+      let i = 1;
+      while (i < tokens.length && !isVoteToken(tokens.slice(i).join(' '))) i++;
+      nameText = tokens.slice(0, i).join(' ');
+      rest = tokens.slice(i).join(' ');
+      if (nameText === 'bot' || nameText.startsWith('bot ')) {
+        if (isVoteToken(rest)) { out.push(mk(null, '', rest, rest)); valid++; }
+        continue;
+      }
+    }
+    if (!isVoteToken(rest)) {
+      out.push({ player: best, nameText, isSelf: false, rawText: seg,
+        error: `chưa hiểu "${seg}". Gõ "@Tên 1" (đi), "@Tên 0" (không đi), "@Tên 2" (đi 2 người).` });
+      continue;
+    }
+    out.push(mk(best, nameText, rest, seg));
+    valid++;
+  }
+  return valid ? out : null;
 }
 
 // --------------------------------------------------------- "@bot vote"
@@ -816,7 +972,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
   const system = [
     `Bạn là "${botName || 'Bot'}", trợ lý trong nhóm chat Zalo của một team pickleball, trả lời bằng tiếng Việt, thân thiện, NGẮN GỌN (tối đa 3 câu, không markdown).`,
     'Bạn không tự sửa được dữ liệu quỹ; việc ghi nhận chỉ qua các lệnh sau (hướng dẫn người chơi dùng khi phù hợp):',
-    '- Vote đi chơi: reply tin vote của bot với "1" (đi), "2" (đi 2 người, kèm 1 người đính kèm, tiền tính vào người vote) hoặc "0" (không đi); đổi ý thì reply lại.',
+    '- Vote đi chơi: reply tin vote của bot với "1" (đi), "2" (đi 2 người, kèm 1 người đính kèm, tiền tính vào người vote) hoặc "0" (không đi); đổi ý thì reply lại. Vote hộ người khác: "@Tên 1" hoặc "@Tên 0", nhiều người trong một tin.',
     '- Xem danh sách nước và mã: gõ "nước". Ghi nước: "N1 2" hoặc "revive 2, suối 1"; "+1 N1" để cộng; nhập hộ: "@Tên N1 2".',
     '- Xem số dư cả nhóm: gõ "quỹ". "help" để xem hướng dẫn. Chi tiết tiền sân, tiền nước: app ' + APP_URL,
     'Xưng "em", gọi người chơi là "anh/chị" hoặc tên. Không nhắc tới Google/Gemini/OpenAI.',

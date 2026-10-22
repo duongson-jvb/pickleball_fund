@@ -92,6 +92,9 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
    "Tự thêm từ Zalo") và ghi vote khi quản lý mở app.
    Tin không phải vote (câu hỏi, trò chuyện) thì bot trả lời chứ **không** đưa vào mục "chưa khớp".
    Mục đó giờ chỉ còn nhận vote không xác định được người gửi (tin không kèm Zalo id) để gán tay.
+   **Vote hộ**: `@An 1`, `@An 0`, `@Bình 0 @An 2` (nhiều người trong một tin; phần trước @ đầu tiên là vote của
+   chính người gửi; bot xác nhận từng người kèm "(Tùng vote hộ)"). Câu có @tên nhưng không phải vote ("@An đi không?")
+   thì bot trả lời như câu hỏi.
    **Chỉ tính tin gửi sau khi buổi chơi được tạo.** Gõ số sai ("10", "01", "1,2,3"), vote khi chưa có
    buổi nào đang mở vote, hoặc vote sau hạn — bot đều **báo lại** chứ không im lặng bỏ qua.
 6. **Ghi nước qua Zalo**: gõ `@bot nước` để bot liệt kê các loại nước kèm **mã ngắn** (N1, N2...) và giá hiện tại
