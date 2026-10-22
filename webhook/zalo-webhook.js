@@ -1,19 +1,22 @@
 /**
- * Cloudflare Worker cho app Quỹ Pickleball.
+ * Webhook + proxy Zalo Bot cho app Quỹ Pickleball. Chạy trên Vercel (api/ ở gốc repo gọi vào đây).
  *
- * 1) Webhook Zalo:   POST https://<worker>.workers.dev/<teamId>
- *    Nhận tin từ Zalo Bot, ghi vào Firestore teams/{teamId}/zaloInbox/{messageId}.
- * 2) Proxy Zalo API: POST https://<worker>.workers.dev/<teamId>/zalo/<method>
+ * 1) Webhook Zalo:   POST https://pickleball-zalo-webhook.vercel.app/<teamId>
+ *    Nhận tin từ Zalo Bot, trả lời lệnh help, hoặc ghi vào Firestore teams/{teamId}/zaloInbox/{messageId}
+ *    để app biến reply thành vote.
+ * 2) Proxy Zalo API: POST https://pickleball-zalo-webhook.vercel.app/<teamId>?zalo=<method>
  *    Body: { "token": "<bot token>", "params": {...} }  → chuyển tiếp tới Zalo.
  *    Cần cho bản web vì bot-api.zaloplatforms.com không bật CORS.
  *
  * Cả hai đều yêu cầu header  X-Bot-Api-Secret-Token = ZALO_SECRET.
  *
- * Biến môi trường (Settings → Variables and Secrets):
+ * Biến môi trường (Vercel → Settings → Environment Variables):
  *   FIREBASE_PROJECT_ID  = pickleball-fund-phm
  *   FIREBASE_API_KEY     = Web API key của Firebase
  *   ZALO_SECRET          = chuỗi bí mật 8-256 ký tự (chữ không dấu + số)
  *   TEAM_ID (tuỳ chọn)   = mã nhóm mặc định nếu URL không có /<teamId>
+ *
+ * Không chạy trên Cloudflare (*.workers.dev / *.pages.dev): Cloudflare chặn máy chủ Zalo (lỗi 1010).
  */
 
 const ZALO_API = 'https://bot-api.zaloplatforms.com';
@@ -45,7 +48,7 @@ export default {
     // Xác thực secret (Zalo gửi kèm khi webhook, app gửi kèm khi proxy).
     const secret = request.headers.get('X-Bot-Api-Secret-Token') || '';
     const secretOk = !env.ZALO_SECRET || secret === env.ZALO_SECRET;
-    // Log gọn để soi bằng `wrangler tail` (không in giá trị secret).
+    // Log gọn để soi trong Logs của Vercel (không in giá trị secret).
     console.log(`POST ${url.pathname} ua="${request.headers.get('User-Agent') || ''}" ` +
       `secretHeader=${secret ? 'yes' : 'no'} secretOk=${secretOk}`);
 

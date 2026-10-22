@@ -1,9 +1,0 @@
-name = "pickleball-zalo-webhook"
-main = "src/index.js"
-compatibility_date = "2026-01-01"
-
-# Biến không bí mật. Secret đặt bằng:  wrangler secret put ZALO_SECRET
-[vars]
-FIREBASE_PROJECT_ID = "pickleball-fund-phm"
-FIREBASE_API_KEY = "AIzaSyBFmd11fse6sjw_rWaHMwxWz3RrzvXnqR8"
-# TEAM_ID = "ma-nhom-cua-ban"   # tuỳ chọn, nếu không muốn đặt teamId trong URL

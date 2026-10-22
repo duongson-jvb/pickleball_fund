@@ -75,12 +75,13 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
 Giới hạn của Zalo Bot API: bot chỉ thấy tin **reply** hoặc **@mention** bot, không sửa/xoá tin, không có nút bấm,
 tính năng bot trong nhóm đang ở giai đoạn thử nghiệm. Token lưu trong tài liệu nhóm trên Firestore (ai có mã nhóm đều đọc được).
 
-**Bản web**: trình duyệt không gọi trực tiếp được Zalo Bot API (không có CORS), nên bản web bắt buộc phải có Worker bên dưới
-làm proxy (điền URL Worker + secret ở mục Webhook trước khi bấm *Kiểm tra & lưu*). Bản iOS/Android gọi thẳng Zalo.
+**Bản web**: trình duyệt không gọi trực tiếp được Zalo Bot API (không có CORS), nên bản web đi qua hàm trên Vercel
+làm proxy (điền URL webhook + secret ở mục Webhook trước khi bấm *Kiểm tra & lưu*). Bản iOS/Android gọi thẳng Zalo.
 
-**Nhận vote mọi lúc (webhook, miễn phí)**: deploy Cloudflare Worker trong thư mục [`worker/`](worker/README.md),
-rồi App → Cài đặt → Zalo Bot → mục *Webhook* → dán URL Worker + secret → *Bật webhook*.
-Zalo đẩy tin về Worker → Firestore `teams/{teamId}/zaloInbox` → app tự biến thành vote ngay khi mở.
+**Nhận vote mọi lúc (webhook, miễn phí)**: hàm trong [`webhook/`](webhook/README.md) deploy lên Vercel
+(`https://pickleball-zalo-webhook.vercel.app/<mã nhóm>`). App → Cài đặt → Zalo Bot → mục *Webhook* → dán URL + secret → *Bật webhook*.
+Zalo đẩy tin về Vercel → Firestore `teams/{teamId}/zaloInbox` → app tự biến thành vote ngay khi mở.
+Lệnh `@bot help` được trả lời ngay tại webhook. Không dùng Cloudflare vì Cloudflare chặn máy chủ Zalo (xem webhook/README.md).
 
 ### Cách 2: thủ công
 - **Tạo vote**: sinh sẵn nội dung vote → chia sẻ sang Zalo.
