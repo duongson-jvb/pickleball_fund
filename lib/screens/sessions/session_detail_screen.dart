@@ -8,6 +8,7 @@ import '../../services/team_store.dart';
 import '../../services/zalo_bot_service.dart';
 import '../../services/zalo_vote_sync.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import '../share/share_screen.dart';
 import 'session_form_screen.dart';
@@ -52,8 +53,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   Session? _session(TeamStore store) =>
       store.sessions.where((s) => s.id == widget.sessionId).firstOrNull;
 
-  /// Áp dụng [update] lên bản mới nhất rồi lưu + tính lại tiền.
-  Future<void> _mutate(SessionUpdater update) {
+  /// Áp dụng [update] lên bản mới nhất rồi lưu + tính lại tiền (cần quản trị).
+  Future<void> _mutate(SessionUpdater update) async {
+    if (!await requireAdmin(context)) return;
+    return _enqueue(update);
+  }
+
+  Future<void> _enqueue(SessionUpdater update) {
     _pendingOps++;
     if (mounted) setState(() => _busy = true);
     final done = Completer<void>();
@@ -546,7 +552,21 @@ class _VoteTabState extends State<_VoteTab> {
                 : const Text('Chưa vote'),
             secondary: CircleAvatar(
                 radius: 16, child: Text(p.name.isEmpty ? '?' : p.name[0].toUpperCase())),
-            onChanged: (v) => onMutate((l) => l.copyWith(votes: {...l.votes, p.id: v ?? false})),
+            // Vote không cần mã bảo mật: người thường ghi thẳng trường votes
+            // (rules chỉ cho đổi votes của buổi đang mở vote).
+            onChanged: !voting
+                ? null
+                : (v) async {
+                    if (store.isAdmin) {
+                      await onMutate((l) => l.copyWith(votes: {...l.votes, p.id: v ?? false}));
+                    } else {
+                      try {
+                        await store.repo.setVote(s.id, p.id, v ?? false);
+                      } catch (e) {
+                        if (context.mounted) showSnack(context, 'Không vote được: $e');
+                      }
+                    }
+                  },
           ),
       ],
     );

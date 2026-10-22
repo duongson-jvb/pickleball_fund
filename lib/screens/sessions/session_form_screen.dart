@@ -5,6 +5,7 @@ import '../../models/models.dart';
 import '../../services/image_util.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import 'session_detail_screen.dart';
 
@@ -55,6 +56,7 @@ class _SessionFormScreenState extends State<SessionFormScreen> {
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
+    if (!await requireAdmin(context) || !mounted) return;
     final store = TeamScope.of(context);
     setState(() => _busy = true);
     try {

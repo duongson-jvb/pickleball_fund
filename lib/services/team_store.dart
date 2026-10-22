@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart';
 
 import '../models/models.dart';
+import 'auth_service.dart';
 import 'team_repository.dart';
 import 'zalo_bot_service.dart';
 import 'zalo_vote_sync.dart';
@@ -11,8 +12,13 @@ import 'zalo_vote_sync.dart';
 /// Giữ toàn bộ dữ liệu realtime của nhóm và các giá trị tính toán
 /// (số dư từng người, quỹ chung, người sắp hết tiền...).
 class TeamStore extends ChangeNotifier {
-  TeamStore(this.repo) {
+  TeamStore(this.repo, {AuthService? auth}) : auth = auth ?? AuthService.none() {
     _subs = [
+      // Đổi trạng thái đăng nhập (mở/khoá quản trị) → vẽ lại giao diện.
+      this.auth.changes.listen((_) {
+        notifyListeners();
+        _processInbox();
+      }),
       repo.watchSettings().listen((v) {
         settings = v;
         _loaded.add('settings');
@@ -69,6 +75,9 @@ class TeamStore extends ChangeNotifier {
         !_loaded.contains('settings')) {
       return;
     }
+    // Xử lý hộp thư ghi vào players/sessions/settings → chỉ máy đang ở chế độ
+    // quản trị mới làm (rules từ chối người thường). Tin vẫn nằm chờ trong hộp thư.
+    if (!isAdmin) return;
     _processingInbox = true;
     try {
       final docs = _pendingInbox;
@@ -114,8 +123,12 @@ class TeamStore extends ChangeNotifier {
   }
 
   final TeamRepository repo;
+  final AuthService auth;
   late final List<StreamSubscription> _subs;
   final Set<String> _loaded = {};
+
+  /// Đang ở chế độ quản trị (được sửa dữ liệu) hay chỉ xem/vote.
+  bool get isAdmin => auth.isAdminOf(settings.adminUid);
 
   TeamSettings settings = const TeamSettings(id: '', name: 'Team Pickleball');
   List<Player> players = [];

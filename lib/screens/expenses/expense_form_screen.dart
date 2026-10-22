@@ -4,6 +4,7 @@ import '../../models/models.dart';
 import '../../services/settlement.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 
 /// Thêm / sửa chi phí khác.
@@ -45,6 +46,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
       showSnack(context, 'Chọn ít nhất một người hoặc chọn "Tất cả"');
       return;
     }
+    if (!await requireAdmin(context) || !mounted) return;
     final store = TeamScope.of(context);
     setState(() => _busy = true);
     try {

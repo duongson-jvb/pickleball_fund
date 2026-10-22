@@ -4,6 +4,7 @@ import '../../models/models.dart';
 import '../../services/share_service.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import 'expense_form_screen.dart';
 
@@ -19,8 +20,11 @@ class ExpensesScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Chi phí khác')),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'fab-expenses',
-        onPressed: () => Navigator.push(
-            context, MaterialPageRoute(builder: (_) => const ExpenseFormScreen())),
+        onPressed: () async {
+          if (!await requireAdmin(context) || !context.mounted) return;
+          Navigator.push(
+              context, MaterialPageRoute(builder: (_) => const ExpenseFormScreen()));
+        },
         icon: const Icon(Icons.add),
         label: const Text('Thêm chi phí'),
       ),
@@ -94,6 +98,7 @@ class _ExpenseTile extends StatelessWidget {
                   title: const Text('Xoá (hoàn tiền lại cho mọi người)'),
                   onTap: () async {
                     Navigator.pop(ctx);
+                    if (!await requireAdmin(context) || !context.mounted) return;
                     if (await confirm(context, 'Xoá chi phí "${e.title}"?')) {
                       await store.repo.deleteExpense(e.id);
                     }

@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../services/image_util.dart';
 import '../../services/share_service.dart';
 import '../../services/team_store.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 
 /// Màn hình QR chuyển khoản: xem, đổi ảnh QR, sửa thông tin tài khoản, chia sẻ.
@@ -12,6 +13,7 @@ class QrScreen extends StatelessWidget {
   const QrScreen({super.key});
 
   Future<void> _pick(BuildContext context, ImageSource source) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final b64 = await ImageUtil.pickAsBase64(source: source, maxWidth: 800, quality: 80);
     if (b64 == null) return;
@@ -20,6 +22,7 @@ class QrScreen extends StatelessWidget {
   }
 
   Future<void> _editBankInfo(BuildContext context) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final ctrl = TextEditingController(text: store.settings.bankInfo);
     final ok = await showDialog<bool>(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/share_service.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import '../dashboard_screen.dart';
 import '../fund/deposit_screen.dart';
@@ -14,6 +15,7 @@ class PlayerDetailScreen extends StatelessWidget {
   final String playerId;
 
   Future<void> _adjust(BuildContext context) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final amount = TextEditingController();
     final note = TextEditingController();
@@ -109,6 +111,7 @@ class PlayerDetailScreen extends StatelessWidget {
               if (v == 'adjust') {
                 await _adjust(context);
               } else if (v == 'delete') {
+                if (!await requireAdmin(context) || !context.mounted) return;
                 final ok = await confirm(
                   context,
                   'Xoá ${player.name}?',
@@ -192,6 +195,7 @@ class PlayerDetailScreen extends StatelessWidget {
               showPlayer: false,
               onDelete: e.refId == null
                   ? () async {
+                      if (!await requireAdmin(context) || !context.mounted) return;
                       if (await confirm(context, 'Xoá giao dịch này?')) {
                         await store.repo.deleteLedgerEntry(e.id);
                       }

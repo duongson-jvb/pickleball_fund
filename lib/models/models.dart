@@ -29,6 +29,7 @@ class TeamSettings {
   final String zaloWebhookSecret;
   final bool zaloWebhookEnabled; // true = Zalo đẩy tin về webhook; false = app tự hỏi (getUpdates)
   final Map<String, ZaloChat> zaloChats; // các chat bot từng nhận tin
+  final String adminUid; // uid tài khoản quản trị (rỗng = chưa đặt mã bảo mật)
 
   const TeamSettings({
     required this.id,
@@ -44,10 +45,12 @@ class TeamSettings {
     this.zaloWebhookSecret = '',
     this.zaloWebhookEnabled = false,
     this.zaloChats = const {},
+    this.adminUid = '',
   });
 
   bool get hasZaloBot => zaloBotToken.isNotEmpty;
   bool get zaloWebhookMode => zaloWebhookEnabled && zaloWebhookUrl.isNotEmpty;
+  bool get hasAdmin => adminUid.isNotEmpty;
 
   factory TeamSettings.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data() ?? {};
@@ -69,6 +72,7 @@ class TeamSettings {
       zaloWebhookSecret: (d['zaloWebhookSecret'] as String?) ?? '',
       zaloWebhookEnabled: d['zaloWebhookEnabled'] == true,
       zaloChats: chats,
+      adminUid: (d['adminUid'] as String?) ?? '',
     );
   }
 }

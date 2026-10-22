@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/models.dart';
 import '../../services/team_store.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import 'player_detail_screen.dart';
 
@@ -63,6 +64,7 @@ class PlayersScreen extends StatelessWidget {
 
 /// Form thêm / sửa người chơi.
 Future<void> showPlayerForm(BuildContext context, {Player? player}) async {
+  if (!await requireAdmin(context) || !context.mounted) return;
   final store = TeamScope.of(context);
   final name = TextEditingController(text: player?.name ?? '');
   final phone = TextEditingController(text: player?.phone ?? '');

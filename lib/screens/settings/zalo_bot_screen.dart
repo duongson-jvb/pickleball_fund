@@ -5,6 +5,7 @@ import '../../services/team_store.dart';
 import '../../services/zalo_bot_service.dart';
 import '../../services/zalo_vote_sync.dart';
 import '../../utils/text.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 
 /// Cài đặt Zalo Bot: token, nhóm nhận vote, kiểm tra kết nối, người đã liên kết.
@@ -41,6 +42,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
       showSnack(context, 'Dán Bot Token vào trước');
       return;
     }
+    if (!await requireAdmin(context) || !mounted) return;
     setState(() {
       _busy = true;
       _status = null;
@@ -99,9 +101,10 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
       showSnack(context, 'Secret cần ít nhất 8 ký tự (trùng với ZALO_SECRET trên Vercel)');
       return;
     }
-    // Tự thêm /<mã nhóm> nếu người dùng chỉ dán URL gốc của Worker.
+    // Tự thêm /<mã nhóm> nếu người dùng chỉ dán URL gốc.
     final base = url.replaceAll(RegExp(r'/+$'), '');
     if (!base.endsWith('/${store.repo.teamId}')) url = '$base/${store.repo.teamId}';
+    if (!await requireAdmin(context) || !mounted) return;
     setState(() {
       _busy = true;
       _status = null;
@@ -135,6 +138,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
 
   Future<void> _disableWebhook() async {
     final store = TeamScope.of(context);
+    if (!await requireAdmin(context) || !mounted) return;
     setState(() => _busy = true);
     try {
       await _bot(store).deleteWebhook();

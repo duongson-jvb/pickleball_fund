@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import 'drink_types_screen.dart';
 import 'qr_screen.dart';
@@ -14,6 +15,7 @@ class SettingsScreen extends StatelessWidget {
   final Future<void> Function() onLeaveTeam;
 
   Future<void> _editName(BuildContext context) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final ctrl = TextEditingController(text: store.settings.name);
     final ok = await showDialog<bool>(
@@ -33,6 +35,7 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _editThreshold(BuildContext context) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final ctrl = TextEditingController(text: store.settings.lowBalanceThreshold.toString());
     final form = GlobalKey<FormState>();
@@ -85,6 +88,52 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
           const Divider(),
+          ListTile(
+            leading: Icon(store.isAdmin ? Icons.lock_open : Icons.lock_outline,
+                color: store.isAdmin ? Colors.green.shade700 : null),
+            title: const Text('Mã bảo mật quản trị'),
+            subtitle: Text(!store.settings.hasAdmin
+                ? 'Chưa đặt. Hiện chưa ai sửa được dữ liệu.'
+                : store.isAdmin
+                    ? 'Đang mở khoá trên máy này. Ai có mã nhóm vẫn xem và vote được.'
+                    : 'Đang khoá. Nhập mã để sửa quỹ, buổi chơi, chi phí, cài đặt.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              if (!store.settings.hasAdmin) {
+                await setupAdminPin(context);
+              } else if (store.isAdmin) {
+                await showModalBottomSheet<void>(
+                  context: context,
+                  showDragHandle: true,
+                  builder: (ctx) => SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.password),
+                          title: const Text('Đổi mã bảo mật'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            changeAdminPin(context);
+                          },
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.lock),
+                          title: const Text('Khoá chế độ quản trị trên máy này'),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            await store.auth.lock();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              } else {
+                await unlockAdmin(context);
+              }
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.warning_amber),
             title: const Text('Ngưỡng cảnh báo hết quỹ'),

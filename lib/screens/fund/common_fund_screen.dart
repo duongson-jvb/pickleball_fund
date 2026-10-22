@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import '../dashboard_screen.dart';
 
@@ -10,6 +11,7 @@ class CommonFundScreen extends StatelessWidget {
   const CommonFundScreen({super.key});
 
   Future<void> _addFunds(BuildContext context) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final amount = TextEditingController();
     final note = TextEditingController();
@@ -96,6 +98,7 @@ class CommonFundScreen extends StatelessWidget {
               // buổi chơi / chi phí sẽ được tính lại khi sửa buổi đó.
               onDelete: e.refId == null
                   ? () async {
+                      if (!await requireAdmin(context) || !context.mounted) return;
                       if (await confirm(context, 'Xoá giao dịch này?')) {
                         await store.repo.deleteLedgerEntry(e.id);
                       }
