@@ -50,3 +50,4 @@ app.*.map.json
 # Cloudflare wrangler
 worker/.wrangler/
 worker/node_modules/
+.vercel
