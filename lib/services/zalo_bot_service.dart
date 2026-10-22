@@ -152,7 +152,7 @@ class ZaloBotService {
     if (token.isEmpty) throw ZaloBotException('Chưa có Bot Token');
     if (kIsWeb && !viaProxy) {
       throw ZaloBotException(
-          'Trình duyệt không gọi trực tiếp được Zalo. Điền URL Worker + secret ở mục Webhook, '
+          'Trình duyệt không gọi trực tiếp được Zalo. Điền URL webhook (Vercel) + secret ở mục Webhook, '
           'hoặc dùng app trên điện thoại.');
     }
     final http.Response res;

@@ -1,7 +1,7 @@
 // Vercel Function (Node.js runtime, chữ ký Web Request/Response qua export GET/POST/OPTIONS):
 // chạy cùng code Worker trên *.vercel.app. Lý do: Cloudflare (workers.dev / pages.dev) chặn
 // request "Java/..." của máy chủ Zalo bằng Browser Integrity Check (lỗi 1010), không tắt được.
-import worker from '../worker/src/index.js';
+import worker from '../webhook/zalo-webhook.js';
 
 function env() {
   return {

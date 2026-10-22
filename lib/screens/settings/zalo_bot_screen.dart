@@ -92,11 +92,11 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     var url = _webhookUrl.text.trim();
     final secret = _webhookSecret.text.trim();
     if (url.isEmpty || !url.startsWith('https://')) {
-      showSnack(context, 'Nhập URL Worker dạng https://...workers.dev');
+      showSnack(context, 'Nhập URL webhook dạng https://pickleball-zalo-webhook.vercel.app');
       return;
     }
     if (secret.length < 8) {
-      showSnack(context, 'Secret cần ít nhất 8 ký tự (trùng với ZALO_SECRET trên Cloudflare)');
+      showSnack(context, 'Secret cần ít nhất 8 ký tự (trùng với ZALO_SECRET trên Vercel)');
       return;
     }
     // Tự thêm /<mã nhóm> nếu người dùng chỉ dán URL gốc của Worker.
@@ -125,7 +125,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
       _webhookUrl.text = url;
       setState(() => _status = verified
           ? 'Webhook: $msg'
-          : 'Webhook chưa dùng được: $msg\nApp tiếp tục tự hỏi Zalo qua Worker (đã lưu URL/secret).');
+          : 'Webhook chưa dùng được: $msg\nApp tiếp tục tự hỏi Zalo qua proxy (đã lưu URL/secret).');
     } catch (e) {
       setState(() => _status = '❌ $e');
     } finally {
@@ -167,7 +167,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
         if (!mounted) return;
         final n = TeamScope.of(context).settings.zaloChats.length;
         setState(() => _status = n == 0
-            ? 'Chưa thấy tin nào qua webhook. Kiểm tra Worker (Logs) và bot đã trong nhóm chưa.'
+            ? 'Chưa thấy tin nào qua webhook. Kiểm tra Logs trên Vercel và bot đã trong nhóm chưa.'
             : 'Đã có $n chat. Chọn nhóm bên dưới.');
         return;
       }
@@ -373,23 +373,23 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
                 style: Theme.of(context).textTheme.bodySmall),
           ],
           const Divider(height: 32),
-          Text('Webhook (Cloudflare Worker) – nhận vote mọi lúc',
+          Text('Webhook (Vercel) – nhận vote mọi lúc, trả lời @bot help',
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
             s.zaloWebhookMode
-                ? '✅ Đang bật. Zalo đẩy tin về Worker → Firestore, app tự xử lý khi mở. '
+                ? '✅ Đang bật. Zalo đẩy tin về webhook → Firestore, app tự xử lý khi mở. '
                     'Chế độ tự hỏi Zalo (getUpdates) bị tắt.'
                 : 'Chưa bật. Hiện app chỉ nhận vote khi đang mở tab Vote. '
-                    'Xem hướng dẫn tạo Worker trong thư mục worker/ của dự án.',
+                    'Xem hướng dẫn deploy trong thư mục webhook/ của dự án.',
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: _webhookUrl,
             decoration: InputDecoration(
-              labelText: 'URL Worker',
-              hintText: 'https://pickleball-zalo-webhook.<ten>.workers.dev',
+              labelText: 'URL webhook (Vercel)',
+              hintText: 'https://pickleball-zalo-webhook.vercel.app',
               helperText: 'App tự thêm /${store.repo.teamId} vào cuối',
             ),
           ),
@@ -397,7 +397,7 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
           TextField(
             controller: _webhookSecret,
             decoration: InputDecoration(
-              labelText: 'Secret (ZALO_SECRET trên Cloudflare)',
+              labelText: 'Secret (ZALO_SECRET trên Vercel)',
               suffixIcon: IconButton(
                 tooltip: 'Tạo chuỗi mới',
                 icon: const Icon(Icons.casino_outlined),

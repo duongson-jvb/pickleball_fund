@@ -1,6 +1,6 @@
-# Chỉ đưa lên Vercel phần webhook (api/ + worker/), bỏ toàn bộ code Flutter.
+# Chỉ đưa lên Vercel phần webhook (api/ + webhook/), bỏ toàn bộ code Flutter.
 /*
 !/api
-!/worker
+!/webhook
 !/vercel.json
 !/package.json
