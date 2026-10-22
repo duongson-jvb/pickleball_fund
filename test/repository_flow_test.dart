@@ -308,28 +308,51 @@ void main() {
       expect(store.sessions.single.votes[la.single.id], isFalse);
     });
 
-    test('chưa có buổi vote: giữ lại tin giống vote, xoá tin khác', () async {
+    test('chưa có buổi vote: tin vote bị bỏ qua và xoá, không tính về sau', () async {
       final (:repo, :store) = await boot();
-      await addPlayers(repo, store, ['An']);
+      final ids = await addPlayers(repo, store, ['An']);
       await repo.updateSettings({'zaloBotToken': 'x:y'});
       await repo.zaloInbox.doc('v1').set({
         'messageId': 'v1', 'fromId': 'z1', 'fromName': 'An', 'chatId': 'g1',
         'chatType': 'GROUP', 'text': '1', 'date': DateTime.now(),
       });
-      await repo.zaloInbox.doc('h1').set({
-        'messageId': 'h1', 'fromId': 'z2', 'fromName': 'B', 'chatId': 'g1',
-        'chatType': 'GROUP', 'text': 'hello bot', 'date': DateTime.now(),
-      });
       await settle();
       await settle();
-      final remaining = await repo.zaloInbox.get();
-      expect(remaining.docs.map((d) => d.id), ['v1']);
+      expect((await repo.zaloInbox.get()).docs, isEmpty, reason: 'không giữ lại');
+      expect(store.settings.zaloChats.keys, ['g1'], reason: 'vẫn nhớ nhóm để chọn');
 
-      // Tạo buổi vote → tin giữ lại được áp dụng.
+      // Tạo buổi vote sau đó → tin cũ KHÔNG được tính.
       await repo.createSession(newSession(id: '').copyWith(status: SessionStatus.voting));
       await settle();
       await settle();
-      expect(store.sessions.single.votes.values, [true]);
+      expect(store.sessions.single.votes, isEmpty);
+      expect(store.playerById(ids['An']!)!.zaloId, '', reason: 'không khớp/nhớ id từ tin cũ');
+    });
+
+    test('chỉ nhận tin gửi sau khi tạo buổi chơi', () async {
+      final (:repo, :store) = await boot();
+      final ids = await addPlayers(repo, store, ['An', 'Bình']);
+      await repo.updateSettings({'zaloBotToken': 'x:y'});
+      final now = DateTime.now();
+      await repo.createSession(Session(
+        id: '', title: 'Vote', date: now.add(const Duration(days: 1)),
+        status: SessionStatus.voting, createdAt: now,
+      ));
+      await settle();
+      // Tin gửi 10 phút TRƯỚC khi tạo buổi → bỏ qua; tin gửi SAU → nhận.
+      await repo.zaloInbox.doc('old').set({
+        'messageId': 'old', 'fromId': 'z-an', 'fromName': 'An', 'chatId': 'g1',
+        'chatType': 'GROUP', 'text': '1', 'date': now.subtract(const Duration(minutes: 10)),
+      });
+      await repo.zaloInbox.doc('new').set({
+        'messageId': 'new', 'fromId': 'z-binh', 'fromName': 'Bình', 'chatId': 'g1',
+        'chatType': 'GROUP', 'text': '1', 'date': now.add(const Duration(seconds: 5)),
+      });
+      await settle();
+      await settle();
+      final votes = store.sessions.single.votes;
+      expect(votes.containsKey(ids['An']!), isFalse);
+      expect(votes[ids['Bình']!], isTrue);
       expect((await repo.zaloInbox.get()).docs, isEmpty);
     });
 

@@ -81,6 +81,7 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
    App khớp người gửi với người chơi (lần đầu theo tên hiển thị, sau đó nhớ Zalo id).
    Người reply vote mà **chưa có trong danh sách sẽ được tự thêm** làm người chơi mới (tên theo Zalo, ghi chú "Tự thêm từ Zalo").
    Tin không rõ nghĩa (không phải 1/0/đi/không) hiện ở mục "chưa khớp" để gán tay.
+   **Chỉ tính tin gửi sau khi buổi chơi được tạo**; tin gửi trước đó hoặc khi chưa có buổi nào đang vote thì bỏ qua.
 
 Giới hạn của Zalo Bot API: bot chỉ thấy tin **reply** hoặc **@mention** bot, không sửa/xoá tin, không có nút bấm,
 tính năng bot trong nhóm đang ở giai đoạn thử nghiệm. Token lưu trong tài liệu nhóm trên Firestore (ai có mã nhóm đều đọc được).
