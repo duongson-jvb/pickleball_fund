@@ -53,10 +53,11 @@ export default {
       return json({ ok: false, error: 'Thiếu teamId trong URL (/<teamId>)' }, 400);
     }
 
-    // ---- Proxy: /<teamId>/zalo/<method>  (bắt buộc đúng secret)
-    if (parts[1] === 'zalo' && parts[2]) {
+    // ---- Proxy: /<teamId>?zalo=<method>  hoặc  /<teamId>/zalo/<method>  (bắt buộc đúng secret)
+    const proxyMethod = url.searchParams.get('zalo') || (parts[1] === 'zalo' ? parts[2] : '');
+    if (proxyMethod) {
       if (!secretOk) return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
-      return proxyZalo(parts[2], request);
+      return proxyZalo(proxyMethod, request);
     }
 
     // ---- Webhook từ Zalo

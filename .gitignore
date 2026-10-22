@@ -51,3 +51,4 @@ app.*.map.json
 worker/.wrangler/
 worker/node_modules/
 .vercel
+.env*
