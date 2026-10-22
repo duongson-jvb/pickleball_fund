@@ -184,8 +184,12 @@ class TeamRepository {
     return ref.id;
   }
 
-  /// Xoá người chơi: xoá chính người đó, mọi giao dịch của họ, và gỡ họ khỏi
-  /// các buổi chơi / chi phí có liên quan rồi tính lại tiền những mục đó.
+  /// Xoá người chơi: xoá chính người đó, mọi giao dịch của họ, và gỡ sạch dấu
+  /// vết của họ khỏi các buổi chơi / chi phí rồi tính lại tiền những mục đó.
+  ///
+  /// "Dấu vết" gồm cả nước của NGƯỜI ĐÍNH KÈM đi cùng họ (id ảo `<id>#1`):
+  /// tiền nước đó tính vào người vote, bỏ sót thì lần lưu sau lại sinh dòng sổ
+  /// quỹ cho người đã xoá.
   ///
   /// Không gỡ khỏi buổi chơi thì lần sau buổi đó được lưu lại (sửa tiền sân,
   /// ghi nước qua Zalo, tự chốt khi hết hạn vote...) sẽ sinh lại dòng sổ quỹ
@@ -208,16 +212,8 @@ class TeamRepository {
     final sessionDocs = await sessions.get();
     for (final d in sessionDocs.docs) {
       final s = Session.fromDoc(d);
-      if (!s.playerIds.contains(id) &&
-          !s.votes.containsKey(id) &&
-          !s.drinks.containsKey(id)) {
-        continue;
-      }
-      await saveAndSettleSession(s.copyWith(
-        playerIds: s.playerIds.where((p) => p != id).toList(),
-        votes: {...s.votes}..remove(id),
-        drinks: {...s.drinks}..remove(id),
-      ));
+      if (!s.mentions(id)) continue;
+      await saveAndSettleSession(s.withoutPlayer(id));
     }
 
     // 3. Gỡ khỏi các chi phí có chọn người rồi tính lại.
@@ -379,7 +375,10 @@ class TeamRepository {
   Future<void> saveAndSettleSession(Session session) =>
       _chained(() => _settleSession(session));
 
-  Future<void> _settleSession(Session session) async {
+  Future<void> _settleSession(Session raw) async {
+    // Dọn nước của người đính kèm đã bị bỏ trước khi tính: nếu không, người
+    // vote vẫn bị trừ tiền nước của một người không còn đi buổi này.
+    final session = raw.pruneCompanionDrinks();
     final settlement = Settlement.computeSession(
       session: session,
       commonFundAvailable: await _commonFundExcluding(session.id),
