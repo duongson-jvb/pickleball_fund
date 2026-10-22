@@ -470,6 +470,41 @@ class Session {
         },
       );
 
+  /// Gộp các vote mới hơn từ bản trên máy chủ vào bản đang cầm.
+  ///
+  /// Webhook ghi vote thẳng vào Firestore 24/7, không cần ai mở app. Nếu quản
+  /// lý cầm một bản chụp cũ rồi lưu đè cả tài liệu thì những vote tới sau lúc
+  /// chụp sẽ biến mất, dù người vote đã được bot xác nhận.
+  ///
+  /// Phân biệt bằng `voteTimes`: chỉ lấy lại mục nào máy chủ có mốc thời gian
+  /// MỚI HƠN bản đang cầm (hoặc bản đang cầm chưa từng thấy người đó). Quản lý
+  /// tự bật/tắt vote trên giao diện không đổi `voteTimes` nên không bị ghi đè.
+  Session mergeNewerVotes(Session remote) {
+    final votes = {...this.votes};
+    final times = {...voteTimes};
+    final comp = {...companions};
+    var changed = false;
+    remote.votes.forEach((pid, remoteVote) {
+      final rt = remote.voteTimes[pid];
+      final lt = times[pid];
+      final newer =
+          !votes.containsKey(pid) || (rt != null && (lt == null || rt.isAfter(lt)));
+      if (!newer) return;
+      votes[pid] = remoteVote;
+      if (rt != null) times[pid] = rt;
+      final rc = remote.companions[pid] ?? 0;
+      if (rc > 0) {
+        comp[pid] = rc;
+      } else {
+        comp.remove(pid);
+      }
+      changed = true;
+    });
+    return changed
+        ? copyWith(votes: votes, voteTimes: times, companions: comp)
+        : this;
+  }
+
   /// Người đó có để lại dấu vết gì trong buổi này không.
   bool mentions(String playerId) =>
       playerIds.contains(playerId) ||
