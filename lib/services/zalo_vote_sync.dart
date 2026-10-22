@@ -66,10 +66,12 @@ class ZaloVoteSync {
     if (n.isEmpty) return null;
     final exact = players.where((p) => normalizeVi(p.name) == n).toList();
     if (exact.length == 1) return exact.first;
+    // Khớp một phần nhưng phải TRỌN CỤM TỪ, nếu không người lạ tên "Lan"
+    // sẽ bị khớp thành người chơi "An" và ghi nhầm vote / tiền nước.
     final partial = players.where((p) {
       final pn = normalizeVi(p.name);
       if (pn.isEmpty) return false;
-      return n.contains(pn) || pn.contains(n);
+      return containsWholeWord(n, pn) || containsWholeWord(pn, n);
     }).toList();
     if (partial.length == 1) return partial.first;
     return null;
@@ -326,10 +328,7 @@ class ZaloVoteSync {
     }
 
     for (final s in touched.values) {
-      await store.repo.saveAndSettleSession(
-        s,
-        commonFundExcludingThis: store.commonFundExcluding(s.id),
-      );
+      await store.repo.saveAndSettleSession(s);
     }
 
     if (lines.isEmpty) return null;

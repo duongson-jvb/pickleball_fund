@@ -63,12 +63,9 @@ Future<TeamStore> bootStore({bool configured = true}) async {
     createdAt: DateTime.now(),
   ));
   await Future<void>.delayed(const Duration(milliseconds: 100));
-  await repo.saveAndSettleSession(store.sessions.firstWhere((s) => s.id == sid),
-      commonFundExcludingThis: 100000);
+  await repo.saveAndSettleSession(store.sessions.firstWhere((s) => s.id == sid));
   await repo.saveAndSettleExpense(
     Expense(id: '', title: 'Bóng', amount: 90000, date: DateTime.now(), createdAt: DateTime.now()),
-    allActivePlayerIds: store.players.map((p) => p.id).toList(),
-    commonFundExcludingThis: 0,
   );
   await repo.updateSettings({
     'zaloBotToken': 'a:b',

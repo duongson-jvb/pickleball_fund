@@ -168,10 +168,7 @@ class _SessionFormScreenState extends State<SessionFormScreen> {
           maxPlayers: max,
           clearMaxPlayers: max == null,
         );
-        await store.repo.saveAndSettleSession(
-          s,
-          commonFundExcludingThis: store.commonFundExcluding(s.id),
-        );
+        await store.repo.saveAndSettleSession(s);
         if (mounted) Navigator.pop(context);
       }
     } finally {

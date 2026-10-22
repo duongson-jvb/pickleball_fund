@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/models.dart';
@@ -11,17 +13,23 @@ class TeamRepository {
   final String teamId;
   final FirebaseFirestore _db;
 
-  /// Hàng đợi tính tiền theo từng buổi / chi phí: hai lần lưu cùng lúc cho
-  /// cùng một buổi sẽ chạy tuần tự, tránh ghi trùng dòng sổ quỹ.
-  final Map<String, Future<void>> _settleChains = {};
+  /// Hàng đợi tính tiền: MỌI lần tính tiền (buổi chơi lẫn chi phí) chạy tuần
+  /// tự với nhau, không chỉ riêng từng buổi. Lý do: tất cả đều tiêu chung một
+  /// số dư quỹ chung, nếu chạy song song thì hai bên cùng thấy số dư cũ và
+  /// quỹ chung bị trừ hai lần (có thể âm).
+  Future<void> _settleQueue = Future<void>.value();
 
-  Future<void> _chained(String key, Future<void> Function() job) {
-    final prev = _settleChains[key] ?? Future<void>.value();
-    final next = prev.catchError((_) {}).then((_) => job());
-    _settleChains[key] = next;
-    return next.whenComplete(() {
-      if (identical(_settleChains[key], next)) _settleChains.remove(key);
+  Future<void> _chained(Future<void> Function() job) {
+    final done = Completer<void>();
+    _settleQueue = _settleQueue.then((_) async {
+      try {
+        await job();
+        done.complete();
+      } catch (e, st) {
+        done.completeError(e, st);
+      }
     });
+    return done.future;
   }
 
   DocumentReference<Map<String, dynamic>> get teamDoc =>
@@ -104,6 +112,38 @@ class TeamRepository {
   Future<void> setVote(String sessionId, String playerId, bool vote) =>
       sessions.doc(sessionId).update({'votes.$playerId': vote});
 
+  // -------------------------------------------- số liệu gốc lúc tính tiền
+  /// Số dư quỹ chung đọc THẲNG từ Firestore, bỏ qua các dòng của
+  /// [excludeRefId] (buổi / chi phí đang được tính lại).
+  ///
+  /// Phải đọc tại đây thay vì nhận từ màn hình: số dư màn hình giữ có thể đã
+  /// cũ, và hai lần lưu gần nhau sẽ cùng tiêu một số dư.
+  Future<int> _commonFundExcluding(String? excludeRefId) async {
+    final snap = await ledger.where('type', whereIn: [
+      LedgerType.commonIn.key,
+      LedgerType.commonOut.key,
+      LedgerType.adjust.key,
+    ]).get();
+    var sum = 0;
+    for (final d in snap.docs) {
+      final data = d.data();
+      if (data['playerId'] != null) continue; // chỉ tính dòng của quỹ chung
+      if (excludeRefId != null && data['refId'] == excludeRefId) continue;
+      final a = data['amount'];
+      sum += a is int ? a : (a is num ? a.round() : 0);
+    }
+    return sum;
+  }
+
+  /// Danh sách người chơi đang hoạt động, đọc thẳng từ Firestore.
+  Future<List<String>> _activePlayerIds() async {
+    final snap = await players.orderBy('createdAt').get();
+    return [
+      for (final d in snap.docs)
+        if (d.data()['active'] != false) d.id,
+    ];
+  }
+
   // ---------------------------------------------------------------- players
   Future<void> addPlayer(String name, {String phone = '', String note = ''}) =>
       players.add({
@@ -138,8 +178,18 @@ class TeamRepository {
     return ref.id;
   }
 
-  /// Xoá người chơi và toàn bộ giao dịch của người đó.
+  /// Xoá người chơi: xoá chính người đó, mọi giao dịch của họ, và gỡ họ khỏi
+  /// các buổi chơi / chi phí có liên quan rồi tính lại tiền những mục đó.
+  ///
+  /// Không gỡ khỏi buổi chơi thì lần sau buổi đó được lưu lại (sửa tiền sân,
+  /// ghi nước qua Zalo, tự chốt khi hết hạn vote...) sẽ sinh lại dòng sổ quỹ
+  /// cho người đã xoá - tiền "ma" cộng vào tổng quỹ mà không màn hình nào hiện.
+  ///
+  /// Phần tiền sân / chi phí người bị xoá đang gánh sẽ được chia lại cho
+  /// những người còn lại trong buổi đó.
   Future<void> deletePlayer(String id) async {
+    // 1. Xoá người và giao dịch của họ TRƯỚC, để các bước tính lại bên dưới
+    //    không còn coi họ là người chơi đang hoạt động.
     final batch = _db.batch();
     final entries = await ledger.where('playerId', isEqualTo: id).get();
     for (final d in entries.docs) {
@@ -147,6 +197,37 @@ class TeamRepository {
     }
     batch.delete(players.doc(id));
     await batch.commit();
+
+    // 2. Gỡ khỏi các buổi chơi (danh sách chơi, vote, nước) rồi tính lại.
+    final sessionDocs = await sessions.get();
+    for (final d in sessionDocs.docs) {
+      final s = Session.fromDoc(d);
+      if (!s.playerIds.contains(id) &&
+          !s.votes.containsKey(id) &&
+          !s.drinks.containsKey(id)) {
+        continue;
+      }
+      await saveAndSettleSession(s.copyWith(
+        playerIds: s.playerIds.where((p) => p != id).toList(),
+        votes: {...s.votes}..remove(id),
+        drinks: {...s.drinks}..remove(id),
+      ));
+    }
+
+    // 3. Gỡ khỏi các chi phí có chọn người rồi tính lại.
+    final expenseDocs = await expenses.get();
+    for (final d in expenseDocs.docs) {
+      final e = Expense.fromDoc(d);
+      if (!e.playerIds.contains(id) && !e.perPlayer.containsKey(id)) continue;
+      final remaining = e.playerIds.where((p) => p != id).toList();
+      // Chi phí chỉ chọn mình người bị xoá: để danh sách rỗng sẽ thành "chia
+      // cho tất cả", nên xoá hẳn chi phí đó thay vì bắt cả nhóm gánh.
+      if (!e.isForEveryone && remaining.isEmpty) {
+        await deleteExpense(e.id);
+        continue;
+      }
+      await saveAndSettleExpense(e.copyWith(playerIds: remaining));
+    }
   }
 
   // ----------------------------------------------------------------- ledger
@@ -287,18 +368,15 @@ class TeamRepository {
   ///
   /// Cách làm: xoá các dòng sổ quỹ cũ của buổi này rồi ghi lại dòng mới,
   /// nên có thể gọi lại bao nhiêu lần cũng được (idempotent).
-  /// [commonFundExcludingThis] là số dư quỹ chung hiện tại KHÔNG tính các
-  /// dòng của buổi này.
-  Future<void> saveAndSettleSession(
-    Session session, {
-    required int commonFundExcludingThis,
-  }) =>
-      _chained('session:${session.id}', () => _settleSession(session, commonFundExcludingThis));
+  /// Số dư quỹ chung được đọc lại từ Firestore ngay lúc tính, màn hình không
+  /// cần (và không được) truyền vào.
+  Future<void> saveAndSettleSession(Session session) =>
+      _chained(() => _settleSession(session));
 
-  Future<void> _settleSession(Session session, int commonFundExcludingThis) async {
+  Future<void> _settleSession(Session session) async {
     final settlement = Settlement.computeSession(
       session: session,
-      commonFundAvailable: commonFundExcludingThis,
+      commonFundAvailable: await _commonFundExcluding(session.id),
     );
     final updated = session.copyWith(settlement: settlement);
 
@@ -366,26 +444,18 @@ class TeamRepository {
   }
 
   // --------------------------------------------------------------- expenses
-  Future<void> saveAndSettleExpense(
-    Expense expense, {
-    required List<String> allActivePlayerIds,
-    required int commonFundExcludingThis,
-  }) {
+  /// Lưu chi phí và tính lại tiền. Danh sách người chơi đang hoạt động và số
+  /// dư quỹ chung đều được đọc lại từ Firestore ngay lúc tính.
+  Future<void> saveAndSettleExpense(Expense expense) {
     final id = expense.id.isEmpty ? expenses.doc().id : expense.id;
-    return _chained('expense:$id',
-        () => _settleExpense(expense, id, allActivePlayerIds, commonFundExcludingThis));
+    return _chained(() => _settleExpense(expense, id));
   }
 
-  Future<void> _settleExpense(
-    Expense expense,
-    String id,
-    List<String> allActivePlayerIds,
-    int commonFundExcludingThis,
-  ) async {
+  Future<void> _settleExpense(Expense expense, String id) async {
     final result = Settlement.computeExpense(
       expense: expense,
-      allActivePlayerIds: allActivePlayerIds,
-      commonFundAvailable: commonFundExcludingThis,
+      allActivePlayerIds: await _activePlayerIds(),
+      commonFundAvailable: await _commonFundExcluding(id),
     );
     final updated = Expense(
       id: id,

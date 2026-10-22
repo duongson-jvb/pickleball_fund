@@ -162,14 +162,15 @@ class ShareService {
     for (final p in store.activePlayers) {
       final name = normalizeVi(p.name);
       if (name.isEmpty) continue;
-      if (normalizedText.contains(name)) {
+      // Khớp trọn cụm từ: tên "An" không được khớp vào "Hoàng Văn Bình".
+      if (containsWholeWord(normalizedText, name)) {
         matched.add(p.id);
         continue;
       }
-      // Thử khớp theo từng dòng với tên không dấu bỏ khoảng trắng.
+      // Tên viết liền không dấu chiếm trọn một dòng: "nguyenvanan".
       final compact = name.replaceAll(' ', '');
       for (final line in normalizedText.split('\n')) {
-        if (line.replaceAll(' ', '').contains(compact)) {
+        if (line.replaceAll(RegExp(r'[^a-z0-9]'), '') == compact) {
           matched.add(p.id);
           break;
         }
