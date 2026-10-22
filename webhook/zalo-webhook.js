@@ -197,6 +197,11 @@ export default {
       }
       const r = await recordVote(env, teamId, open, player, voteShape, dateMs, players);
       console.log(`vote → ${player.name}: ${r.status}`);
+      // Không ghi được ngay (lỗi token/Firestore) → đưa vào hộp thư để app ghi hộ.
+      if (r.status !== 'recorded' && r.status !== 'full') {
+        const saved = await saveInbox(env, teamId, messageId, inboxFields);
+        if (!saved.ok) return saved.response;
+      }
       return replyText(env, teamId, chat, r.text, token);
     }
 
@@ -437,7 +442,7 @@ function seatsTaken(sess) {
 
 /** Các buổi đang ở trạng thái vote, buổi còn hạn xếp trước, rồi theo ngày. */
 async function votingSessions(env, teamId) {
-  const docs = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50`))?.documents || [];
+  const docs = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50&orderBy=date%20desc`))?.documents || [];
   return docs.map(parseSessionDoc).filter((x) => x.status === 'voting')
     .sort((a, b) => (a.expired === b.expired ? a.date - b.date : (a.expired ? 1 : -1)));
 }
@@ -543,7 +548,9 @@ async function recordVote(env, teamId, sess, player, voteShape, dateMs, players)
     voteTimes: { mapValue: { fields: { [pid]: { timestampValue: new Date(dateMs).toISOString() } } } },
   };
   if (vote && seats > 1) fields.companions = { mapValue: { fields: { [pid]: { integerValue: String(seats - 1) } } } };
-  const mask = [`votes.${pid}`, `voteTimes.${pid}`, `companions.${pid}`]
+  // Đoạn id trong field path bọc backtick để id có ký tự lạ ("-", ":") vẫn hợp lệ.
+  const seg = /^[A-Za-z_][A-Za-z0-9_]*$/.test(pid) ? pid : '`' + pid.replace(/`/g, '\\`') + '`';
+  const mask = [`votes.${seg}`, `voteTimes.${seg}`, `companions.${seg}`]
     .map((m) => `updateMask.fieldPaths=${encodeURIComponent(m)}`).join('&');
   const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents` +
     `/teams/${encodeURIComponent(teamId)}/sessions/${encodeURIComponent(sess.id)}?${mask}`;
@@ -708,7 +715,7 @@ const fmtDateTime = (ms) => {
 async function buildContext(env, teamId, teamName) {
   const lines = [`Tên nhóm: ${teamName || teamId}.`];
   try {
-    const sess = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50`))?.documents || [];
+    const sess = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50&orderBy=date%20desc`))?.documents || [];
     const now = Date.now();
     const parsed = sess.map((d) => {
       const f = d.fields || {};

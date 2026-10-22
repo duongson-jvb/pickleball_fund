@@ -73,7 +73,7 @@ Bot `Bot PickleBall JVB` trong nhóm. Bot chỉ thấy tin **reply** bot hoặc 
 
 | Gõ trong nhóm | Bot làm gì |
 |---|---|
-| Reply tin vote: `1` / `2` / `0` (`đi`, `không`, `ok`, `bận`...) | Webhook **ghi vote ngay** vào buổi đang mở và **xác nhận tức thì**: "✅ An: đi · đã có 3/8 suất". Không còn chỗ, hết hạn, chưa có buổi, gõ số sai → bot báo rõ. Người chưa có tên → vào hộp thư, app tự thêm rồi bot xác nhận. Chỉ câu **ngắn** (≤ 5 từ) có từ khoá mới tính là vote; câu nói dài như "anh Sơn bảo anh oke rồi em" chuyển sang AI. |
+| Reply tin vote: `1` / `2` / `0` (`đi`, `không`, `ok`, `bận`...) | Webhook **ghi vote ngay** vào buổi đang mở và **xác nhận tức thì**: "✅ An: đi · đã có 3/8 suất". Không còn chỗ, hết hạn, chưa có buổi, gõ số sai → bot báo rõ. Người chưa có tên (hoặc ghi lỗi tạm thời) → vào hộp thư, app tự thêm/ghi rồi bot xác nhận lại. Chỉ câu **ngắn** (≤ 5 từ) có từ khoá mới tính là vote; câu nói dài như "anh Sơn bảo anh oke rồi em" chuyển sang AI. |
 | `vote`, `danh sách vote` | Các buổi đang mở vote: giờ, sân, hạn, số suất, ai đã vote. Không có thì báo "không có vote nào đang mở". |
 | `help`, `hướng dẫn`, `?` | Hướng dẫn 6 dòng (trả lời tức thì). |
 | Chỉ `@bot` không nội dung | Bot nhắc các lệnh. Mọi tin tag bot đều có phản hồi; AI lỗi cũng trả lời "em chưa hiểu, gõ help". |

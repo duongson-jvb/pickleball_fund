@@ -314,6 +314,11 @@ class ZaloVoteSync {
         if (seats - mine + count > session.maxPlayers!) {
           fullNames.add('${player?.name ?? u.fromName}${count > 1 ? ' ($count suất)' : ''}');
           ignored++;
+          // Webhook (nếu có) mới chỉ báo "đã nhận" cho người chưa có tên → phải báo hết chỗ.
+          final left = session.maxPlayers! - (seats - mine);
+          await _send(store, u.chatId,
+              '😢 ${player?.name ?? u.fromName}: buổi chỉ còn $left chỗ (giới hạn ${session.maxPlayers}), '
+              'em chưa ghi được $count suất.${left > 0 ? ' Reply "$left" để giữ $left chỗ nhé.' : ''}');
           continue;
         }
       }
@@ -391,8 +396,10 @@ class ZaloVoteSync {
         'zaloPending': pending.values.map((e) => e.toMap()).toList(),
       });
       // Báo lại cho người vote: điểm danh thành công thì không được im lặng.
+      // Gửi cả ở chế độ webhook, vì webhook mới chỉ báo "đã nhận" (người chưa có
+      // tên / ghi lỗi) chứ chưa xác nhận đã ghi vote.
       for (final e in confirmations.entries) {
-        await _reply(store, e.key, e.value.join('\n'));
+        await _send(store, e.key, e.value.join('\n'));
       }
     }
     return ZaloSyncResult(
@@ -510,8 +517,14 @@ class ZaloVoteSync {
   /// Trả lời người gửi trong chat Zalo. Ở chế độ webhook thì webhook đã trả
   /// lời ngay rồi, app không nhắn lại nữa cho khỏi trùng.
   static Future<void> _reply(TeamStore store, String chatId, String text) async {
+    if (store.settings.zaloWebhookMode) return;
+    await _send(store, chatId, text);
+  }
+
+  /// Gửi tin vào chat bất kể chế độ (dùng khi webhook chưa trả lời dứt điểm).
+  static Future<void> _send(TeamStore store, String chatId, String text) async {
     final s = store.settings;
-    if (s.zaloWebhookMode || !s.hasZaloBot || chatId.isEmpty) return;
+    if (!s.hasZaloBot || chatId.isEmpty) return;
     try {
       await ZaloBotService.forTeam(s, store.repo.teamId).sendMessage(chatId, text);
     } catch (_) {

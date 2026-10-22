@@ -49,6 +49,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes('/players')) return ok({ documents: state.players });
   if (u.includes('/sessions/') && opts.method === 'PATCH') {
     if (!(opts.headers?.Authorization || '').startsWith('Bearer ')) return ok({ error: 'no auth' }, 403);
+    if (state.patchFail) return ok({ error: { code: 403, message: 'PERMISSION_DENIED' } }, 403);
     state.patched.push({ url: u, body: JSON.parse(opts.body) });
     return ok({});
   }
@@ -114,7 +115,14 @@ state.players = [player('p-an', 'An', AN), player('p-binh', 'Bình', BINH), play
 console.log('— Có buổi đang mở vote (giới hạn 4) —');
 state.sessions = [sessionDoc({ max: 4, votes: { 'p-binh': true }, companions: { 'p-binh': 1 } })];
 await check('vote "1" (người đã biết)', { text: '1' }, { reply: '✅ An: đi', patched: true });
-await check('vote "2" (kèm 1)', { text: '2' }, { reply: '+1 đính kèm', patched: true });
+const r2 = await check('vote "2" (kèm 1)', { text: '2' }, { reply: '+1 đính kèm', patched: true });
+// id người chơi có dấu "-" → field path trong updateMask phải bọc backtick (`p-an`).
+if (!r2.patched.every((p) => p.url.includes(encodeURIComponent('votes.`p-an`')))) {
+  fails++; log.push('SAI  updateMask thiếu backtick cho id có dấu "-"');
+}
+state.patchFail = true;
+await check('ghi vote lỗi → hộp thư + báo đã nhận', { text: '1' }, { reply: 'chưa ghi được ngay', inbox: true });
+state.patchFail = false;
 await check('vote "0"', { text: '0' }, { reply: '👌 An: không đi', patched: true });
 await check('vote "3" vượt chỗ (còn 2)', { text: '3' }, { reply: 'chỉ còn 2 chỗ' });
 await check('vote câu ngắn "cho em đi với"', { text: 'cho em đi với' }, { reply: '✅ An: đi', patched: true });
