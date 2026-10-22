@@ -10,6 +10,8 @@ export const maxDuration = 60;
 
 export function buildEnv() {
   return {
+    // Chuyển toàn bộ biến môi trường (CRON_SECRET, PUBLIC_BASE_URL, TEAM_IDS...) cho webhook.
+    ...process.env,
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || 'pickleball-fund-phm',
     FIREBASE_API_KEY: process.env.FIREBASE_API_KEY || '',
     ZALO_SECRET: process.env.ZALO_SECRET || '',
