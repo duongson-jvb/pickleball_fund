@@ -299,17 +299,51 @@ const VOTE_YES_RE = /(^|\s)(1|\+1|di|co|ok|oke|okie|okay|yes|y|tham gia|join|cho
  */
 const QUESTION_RE = /(^|\s)(gi|dau|khi nao|luc nao|may gio|bao nhieu|bao gio|sao|the nao|tai sao|ai|nao|co ai|phai khong|duoc khong|chua)(\s|$)/;
 
-function classify(text, botName) {
+function escapeRe(x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/** Các tên gọi (không dấu) của loại nước: tên đầy đủ, tên bỏ "nuoc", mã n<code>. */
+async function drinkAliases(env, teamId) {
+  const docs = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/drinkTypes?pageSize=100`))?.documents || [];
+  const out = [];
+  for (const d of docs) {
+    const f = d.fields || {};
+    if (f.active?.booleanValue === false) continue;
+    const full = normalizeVi(f.name?.stringValue || '');
+    if (full) out.push(full);
+    const short = full.replace(/^nuoc\s+/, '').trim();
+    if (short && short !== full) out.push(short);
+    const code = parseInt(f.code?.integerValue || '0', 10) || 0;
+    if (code) out.push(`n${code}`, `#${code}`);
+  }
+  return out;
+}
+
+/**
+ * Phân loại tin: 'empty' (chỉ @bot), 'command' (vote / lệnh nước → app xử lý), 'chat' (→ AI).
+ * - Chỉ số ("1", "0", "+1") → vote.
+ * - Có dấu "?" hoặc từ để hỏi → chat (kể cả có số).
+ * - Có số kèm "nước" / mã N1 / tên loại nước → lệnh nước. Có số nhưng không kèm → chat
+ *   (ví dụ "tăng cho anh Tiến 100k tiền quỹ" là câu nói, không phải lệnh).
+ * - Ngắn (≤ 3 từ) có từ khoá vote → vote. Còn lại → chat.
+ */
+async function classify(env, teamId, text, botName) {
   let t = normalizeVi(text);
   if (botName) t = t.split(normalizeVi(botName)).join(' ');
   t = t.replace(/@\S*/g, ' ');
   const hasQuestionMark = t.includes('?');
   t = t.replace(/[?!.,:;]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!t) return 'empty';
-  if (/\d/.test(t)) return 'command'; // vote "1"/"0", lệnh nước "N1 2"
-  if (hasQuestionMark || QUESTION_RE.test(t)) return 'chat'; // câu hỏi → ChatGPT/Gemini
+  if (/^[+-]?\d+$/.test(t)) return 'command';
+  if (hasQuestionMark || QUESTION_RE.test(t)) return 'chat';
+  if (/\d/.test(t)) {
+    if (/(^|\s)(nuoc|drink)(\s|$)/.test(t) || /(^|\s|,)(n\d+|#\d+)(\s|,|$)/.test(t)) return 'command';
+    for (const a of await drinkAliases(env, teamId)) {
+      if (new RegExp(`(^|\\s|,)${escapeRe(a)}(\\s|,|$)`).test(t)) return 'command';
+    }
+    return 'chat';
+  }
   const words = t.split(' ').length;
-  if (words <= 3 && (VOTE_NO_RE.test(t) || VOTE_YES_RE.test(t))) return 'command'; // "đi", "không đi"
+  if (words <= 3 && (VOTE_NO_RE.test(t) || VOTE_YES_RE.test(t))) return 'command';
   return 'chat';
 }
 
@@ -385,7 +419,7 @@ async function maybeChatReply(env, teamId, chatId, text, fromName) {
   const token = tf.zaloBotToken?.stringValue || '';
   const botName = tf.zaloBotName?.stringValue || '';
   if (!token) return null;
-  const kind = classify(text, botName);
+  const kind = await classify(env, teamId, text, botName);
   if (kind === 'empty') return json({ ok: true, ignored: 'empty-mention' });
   if (kind === 'command') return null;
 
