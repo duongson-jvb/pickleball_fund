@@ -4,7 +4,13 @@ import 'package:pickleball_fund/services/zalo_vote_sync.dart';
 
 void main() {
   Player p(String id, String name) => Player(id: id, name: name, createdAt: DateTime(2026));
-  final players = [p('an', 'An'), p('binh', 'Nguyễn Văn Bình'), p('chi', 'Chi'), p('chien', 'Chiến')];
+  final players = [
+    p('an', 'An'),
+    p('binh', 'Nguyễn Văn Bình'),
+    p('chi', 'Chi'),
+    p('chien', 'Chiến'),
+    Player(id: 'tung', name: 'Tùng', zaloName: 'Tung Dep Trai', createdAt: DateTime(2026)),
+  ];
   const bot = 'Bot PickleBall JVB';
 
   group('ZaloVoteSync.parseProxyVotes', () {
@@ -37,6 +43,14 @@ void main() {
       expect(r.single.player, isNull);
       expect(r.single.nameText, 'nguoi la');
       expect(r.single.reading.vote, isTrue);
+    });
+    test('tên hiển thị Zalo đã nhớ và tên dài chứa tên app đều khớp', () {
+      expect(ZaloVoteSync.parseProxyVotes('@Tung Dep Trai 1', players)!.single.player?.id, 'tung');
+      expect(ZaloVoteSync.parseProxyVotes('@Nguyễn Văn An 0', players)!.single.player?.id, 'an');
+      // Một từ trọn vẹn của tên, duy nhất → khớp (giống nhập hộ nước và khớp người gửi).
+      expect(ZaloVoteSync.parseProxyVotes('@Văn 1', players)!.single.player?.id, 'binh');
+      // Không có ai → không khớp bừa.
+      expect(ZaloVoteSync.parseProxyVotes('@Hùng 1', players)!.single.player, isNull);
     });
     test('tên viết tắt mơ hồ ("Chi" vs "Chiến") khớp đúng người tên Chi', () {
       final r = ZaloVoteSync.parseProxyVotes('@Chi 1', players)!;

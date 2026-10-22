@@ -14,9 +14,10 @@ const priceField = (v) => ({
   arrayValue: { values: [{ mapValue: { fields: {
     date: { timestampValue: '2026-01-01T00:00:00Z' }, price: { integerValue: String(v) } } } }] },
 });
-const player = (id, name, zaloId = '') => doc(`teams/${TEAM}/players/${id}`, {
+const player = (id, name, zaloId = '', zaloName = '') => doc(`teams/${TEAM}/players/${id}`, {
   name: { stringValue: name }, active: { booleanValue: true },
   ...(zaloId ? { zaloId: { stringValue: zaloId } } : {}),
+  ...(zaloName ? { zaloName: { stringValue: zaloName } } : {}),
 });
 
 function sessionDoc({ id = 's1', status = 'voting', dateOffsetH = 48, deadlineOffsetH = 24, title = 'Thứ 7',
@@ -114,7 +115,7 @@ async function check(label, msg, want) {
 }
 
 const AN = 'z1', BINH = 'z2';
-state.players = [player('p-an', 'An', AN), player('p-binh', 'Bình', BINH), player('p-tung', 'Tùng')];
+state.players = [player('p-an', 'An', AN), player('p-binh', 'Bình', BINH, 'Binh Dep Trai'), player('p-tung', 'Tùng')];
 
 console.log('— Có buổi đang mở vote (giới hạn 4) —');
 state.sessions = [sessionDoc({ max: 4, votes: { 'p-binh': true }, companions: { 'p-binh': 1 } })];
@@ -138,10 +139,13 @@ const px2 = await check('vote hộ nhiều người "@Bình 0 @An 2"', { text: '
 if (!px2.sent.join('\n').includes('An (+1 đính kèm)')) { fails++; log.push('SAI  vote hộ "@An 2" phải ra +1 đính kèm'); }
 if (!(px2.patched.length === 1 && px2.patched[0].url.includes('p-binh') && px2.patched[0].url.includes('p-an'))) { fails++; log.push('SAI  vote hộ nhiều người phải ghi trong MỘT lần PATCH'); }
 await check('vote hộ + tự vote "1 @An 0"', { text: '1 @An 0', from: TUNG }, { reply: '✅ Tùng: đi', patched: true });
+await check('vote hộ theo tên hiển thị Zalo đã nhớ "@Binh Dep Trai 1"', { text: '@Binh Dep Trai 1', from: TUNG }, { reply: '✅ Bình: đi', patched: true });
+await check('vote hộ tên dài chứa tên app "@Nguyễn Văn An 0"', { text: '@Nguyễn Văn An 0', from: TUNG }, { reply: '👌 An: không đi', patched: true });
 await check('vote hộ tên lạ', { text: '@Người Lạ 1', from: TUNG }, { reply: 'Không tìm thấy người chơi "nguoi la"' });
 await check('vote hộ số sai "@An 10"', { text: '@An 10', from: TUNG }, { reply: 'Em chưa hiểu' });
 await check('vote hộ vượt chỗ "@An 3" (còn 2)', { text: '@An 3', from: TUNG }, { reply: 'chỉ còn 2 chỗ' });
 await check('"@An đi không?" là câu hỏi → AI', { text: '@An đi không?', from: TUNG }, { reply: 'Dạ em đây' });
+await check('"@An đi nhé" ngắn có từ khoá nhưng nói với người khác → AI', { text: '@An đi nhé', from: TUNG }, { reply: 'Dạ em đây' });
 await check('"@An mai đi sớm nhé" là câu nói → AI', { text: '@An mai đi sớm nhé anh ơi', from: TUNG }, { reply: 'Dạ em đây' });
 const px3 = await check('người lạ tự vote + vote hộ "1 @An 1"', { text: '1 @An 1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: '✅ An: đi', inbox: true, patched: true });
 if (!(px3.saved.length === 1 && px3.saved[0] === '1')) { fails++; log.push(`SAI  hộp thư chỉ được chứa phần tự vote "1", đang là ${JSON.stringify(px3.saved)}`); }

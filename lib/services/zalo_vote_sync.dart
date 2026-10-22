@@ -197,14 +197,17 @@ class ZaloVoteSync {
     for (final raw in parts.skip(1)) {
       final seg = raw.trim();
       if (seg.isEmpty) continue;
+      // Khớp dài nhất theo tên trong app HOẶC tên hiển thị Zalo đã nhớ (Zalo chèn
+      // @mention bằng tên hiển thị, thường khác tên trong app).
       Player? best;
       var bestLen = 0;
       for (final p in players) {
-        final n = normalizeVi(p.name);
-        if (n.isEmpty) continue;
-        if ((seg == n || seg.startsWith('$n ')) && n.length > bestLen) {
-          best = p;
-          bestLen = n.length;
+        for (final n in {normalizeVi(p.name), normalizeVi(p.zaloName)}) {
+          if (n.isEmpty) continue;
+          if ((seg == n || seg.startsWith('$n ')) && n.length > bestLen) {
+            best = p;
+            bestLen = n.length;
+          }
         }
       }
       String nameText;
@@ -229,6 +232,9 @@ class ZaloVoteSync {
           }
           continue;
         }
+        // "@Nguyễn Văn An" với người chơi tên "An": khớp trọn từ, duy nhất.
+        best = matchPlayer(zaloId: '', zaloName: nameText, players: players);
+        if (best != null) nameText = best.name;
       }
       if (!isVoteToken(rest)) {
         out.add(ProxyVote(best, nameText,

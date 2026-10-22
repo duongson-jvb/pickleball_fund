@@ -554,6 +554,7 @@ async function loadPlayers(env, teamId) {
     id: String(d.name || '').split('/').pop(),
     name: d.fields?.name?.stringValue || '',
     zaloId: d.fields?.zaloId?.stringValue || '',
+    zaloName: d.fields?.zaloName?.stringValue || '',
     active: d.fields?.active?.booleanValue !== false,
   })).filter((p) => p.active);
 }
@@ -729,10 +730,13 @@ function parseProxyVotesJs(text, botName, players) {
   for (const raw of parts.slice(1)) {
     const seg = raw.trim();
     if (!seg) continue;
+    // Khớp dài nhất theo tên trong app HOẶC tên hiển thị Zalo đã nhớ (Zalo chèn
+    // @mention bằng tên hiển thị, thường khác tên trong app).
     let best = null, bestLen = 0;
     for (const p of players) {
-      const n = normalizeVi(p.name);
-      if (n && (seg === n || seg.startsWith(n + ' ')) && n.length > bestLen) { best = p; bestLen = n.length; }
+      for (const n of new Set([normalizeVi(p.name), normalizeVi(p.zaloName || '')])) {
+        if (n && (seg === n || seg.startsWith(n + ' ')) && n.length > bestLen) { best = p; bestLen = n.length; }
+      }
     }
     let nameText, rest;
     if (best) {
@@ -747,6 +751,9 @@ function parseProxyVotesJs(text, botName, players) {
         if (isVoteToken(rest)) { out.push(mk(null, '', rest, rest)); valid++; }
         continue;
       }
+      // "@Nguyễn Văn An" với người chơi tên "An": khớp trọn từ, duy nhất.
+      best = matchPlayerJs(players, '', nameText);
+      if (best) nameText = best.name;
     }
     if (!isVoteToken(rest)) {
       out.push({ player: best, nameText, isSelf: false, rawText: seg,
@@ -877,6 +884,8 @@ async function classify(env, teamId, text, botName) {
   if (/\d/.test(t)) {
     return hasDrinkMarker(t, await drinkAliases(env, teamId)) ? 'command' : 'chat';
   }
+  // "@An đi nhé": nói với người khác, không phải vote của người gửi → chat.
+  if (hasOtherMention(text, botName)) return 'chat';
   const words = t.split(' ').length;
   if (words <= 3 && (VOTE_NO_RE.test(t) || VOTE_YES_RE.test(t))) return 'command';
   return 'chat';
