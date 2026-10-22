@@ -131,14 +131,20 @@ export default {
     const voteBotName = teamForVote?.fields?.zaloBotName?.stringValue || '';
     const voteShape = readVoteShape(text, voteBotName);
 
+    // Lệnh ghi nước cũng chứa từ khoá vote ("+1 N1", "N1 0") → không phải vote,
+    // để nguyên cho app xử lý.
+    const cleanedForDrink = cleanForCommand(text, voteBotName);
+    const isDrinkCommand = /\d/.test(cleanedForDrink) &&
+      hasDrinkMarker(cleanedForDrink, await drinkAliases(env, teamId));
+
     // Gõ số sai ("10", "01", "0.1", "1,2,3"...) → báo lại ngay, không tính vote.
-    if (voteShape.error) {
+    if (!isDrinkCommand && voteShape.error) {
       console.log(`vote sai cu phap: "${text.slice(0, 40)}"`);
       return replyText(env, teamId, String(chatId), voteShape.error);
     }
 
     // Vote khi chưa có buổi nào đang mở vote (hoặc đã hết hạn) → báo lại.
-    if (voteShape.definite) {
+    if (!isDrinkCommand && voteShape.definite) {
       const open = await openVoteSession(env, teamId);
       if (!open) {
         return replyText(env, teamId, String(chatId), NO_OPEN_VOTE_TEXT);
@@ -155,6 +161,10 @@ export default {
       ? (msg.date > 1e11 ? msg.date : msg.date * 1000)
       : Date.now();
 
+    // Ảnh kèm chú thích: nội dung nằm ở caption chứ không phải text, mà lệnh ghi
+    // nước vẫn có thể nằm trong đó - phải xét đúng chuỗi sẽ lưu vào hộp thư.
+    const inboxText = String(msg.text ?? msg.caption ?? '');
+
     const fields = {
       eventName: s(result.event_name ?? ''),
       messageId: s(messageId),
@@ -162,7 +172,7 @@ export default {
       fromName: s(msg.from?.display_name ?? ''),
       chatId: s(chatId),
       chatType: s(msg.chat?.chat_type ?? 'PRIVATE'),
-      text: s(msg.text ?? msg.caption ?? ''),
+      text: s(inboxText),
       date: { timestampValue: new Date(dateMs).toISOString() },
       receivedAt: { timestampValue: new Date().toISOString() },
     };
@@ -171,7 +181,7 @@ export default {
     // lý quyết định ở mục "chưa khớp") và tin có chữ số (lệnh nước). Chuyện phiếm
     // thuần tuý thì không ghi, tránh làm rác mục "chưa khớp".
     const aiEnabled = !!(env.GEMINI_API_KEY || env.OPENAI_API_KEY);
-    const saveToInbox = !aiEnabled || voteShape.maybe || /\d/.test(text);
+    const saveToInbox = !aiEnabled || voteShape.maybe || /\d/.test(inboxText);
 
     if (saveToInbox) {
       const docPath =
@@ -196,7 +206,7 @@ export default {
     // Tin không chắc chắn là vote → để AI trả lời. Phải ghi hộp thư TRƯỚC rồi mới
     // gọi AI: trước đây AI trả lời xong là thoát luôn, nên vote dài hơn ba từ
     // ("cho em đi với") không bao giờ tới được app - mất vote mà không ai biết.
-    if (aiEnabled && text.trim() && !voteShape.definite) {
+    if (aiEnabled && text.trim() && !voteShape.definite && !isDrinkCommand) {
       const r = await maybeChatReply(env, teamId, String(chatId), text, msg.from?.display_name || '');
       if (r) return r;
     }
@@ -448,6 +458,27 @@ async function drinkAliases(env, teamId) {
   return out;
 }
 
+/** Chuẩn hoá tin để so khớp lệnh: bỏ tên bot, bỏ @mention, bỏ dấu câu. */
+function cleanForCommand(text, botName) {
+  let t = normalizeVi(text);
+  if (botName) t = t.split(normalizeVi(botName)).join(' ');
+  return t.replace(/@\S*/g, ' ').replace(/[?!.,:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Tin có dấu hiệu của lệnh ghi nước: chữ "nước", mã ngắn N1/#1, hoặc tên một
+ * loại nước của nhóm. Phải kiểm trước khi coi là vote, vì "+1 N1" và "N1 0"
+ * chứa đúng những từ khoá vote ("+1", "0").
+ */
+function hasDrinkMarker(t, aliases) {
+  if (/(^|\s)(nuoc|drink)(\s|$)/.test(t)) return true;
+  if (/(^|\s|,)(n\d+|#\d+)(\s|,|$)/.test(t)) return true;
+  for (const a of aliases) {
+    if (new RegExp(`(^|\\s|,)${escapeRe(a)}(\\s|,|$)`).test(t)) return true;
+  }
+  return false;
+}
+
 /**
  * Phân loại tin: 'empty' (chỉ @bot), 'command' (vote / lệnh nước → app xử lý), 'chat' (→ AI).
  * - Chỉ số ("1", "0", "+1") → vote.
@@ -466,11 +497,7 @@ async function classify(env, teamId, text, botName) {
   if (/^[+-]?\d+$/.test(t)) return 'command';
   if (hasQuestionMark || QUESTION_RE.test(t)) return 'chat';
   if (/\d/.test(t)) {
-    if (/(^|\s)(nuoc|drink)(\s|$)/.test(t) || /(^|\s|,)(n\d+|#\d+)(\s|,|$)/.test(t)) return 'command';
-    for (const a of await drinkAliases(env, teamId)) {
-      if (new RegExp(`(^|\\s|,)${escapeRe(a)}(\\s|,|$)`).test(t)) return 'command';
-    }
-    return 'chat';
+    return hasDrinkMarker(t, await drinkAliases(env, teamId)) ? 'command' : 'chat';
   }
   const words = t.split(' ').length;
   if (words <= 3 && (VOTE_NO_RE.test(t) || VOTE_YES_RE.test(t))) return 'command';
