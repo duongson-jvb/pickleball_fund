@@ -9,7 +9,7 @@ class ZaloCommands {
   static const appUrl = 'https://duongson-jvb.github.io/pickleball_fund/';
 
   static const helpText = '🏓 Bot Quỹ Pickleball\n'
-      '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không\n'
+      '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4\n'
       '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ\n'
       '• Quỹ: "quỹ" xem số dư cả nhóm\n'
       '• Hỏi gì cứ @bot, em trả lời\n'

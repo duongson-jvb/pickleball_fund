@@ -42,34 +42,84 @@ class ZaloVoteSync {
   static final _yesPattern = RegExp(
       r'(^|\s)(1|\+1|di|co|ok|oke|okie|okay|yes|y|tham gia|join|choi|dk|dang ky|chot|len|vao|count me)(\s|$)');
 
-  /// Hiểu nội dung reply: true = đi, false = không đi, null = không rõ.
-  /// [botName] để bỏ phần @mention bot trước khi phân tích.
-  static bool? parseVote(String text, {String botName = ''}) {
+  /// Số suất tối đa một người được đăng ký (bản thân + người đính kèm).
+  /// Gõ số lớn hơn bị coi là nhập sai, bot báo lại thay vì tính bừa.
+  static const maxVoteSeats = 4;
+
+  /// Câu dài hơn số từ này mà chỉ có từ khoá vote (không phải con số) thì
+  /// KHÔNG tự tính thành vote - đưa vào mục "chưa khớp" để quản lý quyết định,
+  /// tránh câu nói thường như "mai mình đi đá bóng nhé" bị tính là đi.
+  static const _maxWordsForKeywordVote = 5;
+
+  /// Kết quả đọc một tin vote.
+  static VoteReading readVote(String text, {String botName = ''}) {
     var t = normalizeVi(text);
     if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
-    t = t.replaceAll('@', ' ').replaceAll(RegExp(r'[.,!?()\[\]:;]+'), ' ');
-    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (t.isEmpty) return null;
-    // Chỉ là số: "0" = không đi; "1", "2", "3"... = đi (số suất, kèm người đính kèm).
-    final num = RegExp(r'^\+?(\d{1,2})(\s+(nguoi|ng|suat|slot))?$').firstMatch(t);
-    if (num != null) return int.parse(num.group(1)!) > 0;
-    if (_noPattern.hasMatch(t)) return false;
-    if (_yesPattern.hasMatch(t)) return true;
-    return null;
+    t = t.replaceAll('@', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (t.isEmpty) return const VoteReading(null);
+
+    // Tin chỉ gồm chữ số và dấu phân cách (không có chữ cái): bắt buộc phải là
+    // MỘT số nguyên hợp lệ. "10", "01", "0.1", "1,0", "1,2,3" là nhập sai.
+    final numericOnly = RegExp(r'^[+\-\d.,\s]+$').hasMatch(t);
+    if (numericOnly) {
+      final cleaned = t.replaceAll(RegExp(r'\.+$'), '').trim(); // bỏ dấu chấm cuối câu
+      if (cleaned == '-1') return const VoteReading(false, seats: 0);
+      final m = RegExp(r'^\+?(\d+)$').firstMatch(cleaned);
+      if (m == null) return VoteReading(null, error: _numberError(text));
+      return _fromNumber(m.group(1)!, text);
+    }
+
+    // "2 người", "3 suất".
+    final withUnit =
+        RegExp(r'^\+?(\d+)\s+(nguoi|ng|suat|slot)$').firstMatch(t);
+    if (withUnit != null) return _fromNumber(withUnit.group(1)!, text);
+
+    final words = t.replaceAll(RegExp(r'[.,!?()\[\]:;]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (_noPattern.hasMatch(words) || _yesPattern.hasMatch(words)) {
+      // Câu quá dài thì không chắc là vote → để quản lý quyết định.
+      if (words.split(' ').length > _maxWordsForKeywordVote) {
+        return const VoteReading(null);
+      }
+      if (_noPattern.hasMatch(words)) return const VoteReading(false, seats: 0);
+      // "đi 2", "ok 3": từ khoá kèm số suất.
+      final n = RegExp(r'(^|\s)\+?(\d+)(\s|$)').firstMatch(words);
+      if (n != null) {
+        final fromNumber = _fromNumber(n.group(2)!, text);
+        if (fromNumber.isError) return fromNumber;
+        return VoteReading(true, seats: fromNumber.seats < 1 ? 1 : fromNumber.seats);
+      }
+      return const VoteReading(true, seats: 1);
+    }
+    return const VoteReading(null);
   }
+
+  static VoteReading _fromNumber(String digits, String original) {
+    // "01", "007" - số 0 đứng đầu là gõ nhầm.
+    if (digits.length > 1 && digits.startsWith('0')) {
+      return VoteReading(null, error: _numberError(original));
+    }
+    final n = int.parse(digits);
+    if (n > maxVoteSeats) return VoteReading(null, error: _numberError(original));
+    if (n == 0) return const VoteReading(false, seats: 0);
+    return VoteReading(true, seats: n);
+  }
+
+  static String _numberError(String original) =>
+      '🤔 Em chưa hiểu "${original.trim()}". Reply "0" = không đi, "1" = đi, '
+      '"2" = đi 2 người (kèm 1)... tối đa "$maxVoteSeats".';
+
+  /// Hiểu nội dung reply: true = đi, false = không đi, null = không rõ.
+  /// [botName] để bỏ phần @mention bot trước khi phân tích.
+  static bool? parseVote(String text, {String botName = ''}) =>
+      readVote(text, botName: botName).vote;
 
   /// Số suất khi vote "đi": "1"/"đi" = 1 (một mình), "2" = 2 (kèm 1 người),
   /// "3 người", "đi 2" = số tương ứng. Tối đa 10. Không phải vote đi → null.
   static int? parseVoteCount(String text, {String botName = ''}) {
-    if (parseVote(text, botName: botName) != true) return null;
-    var t = normalizeVi(text);
-    if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
-    t = t.replaceAll('@', ' ').replaceAll(RegExp(r'[.,!?()\[\]:;]+'), ' ');
-    final m = RegExp(r'(^|\s)\+?(\d{1,2})(\s|$)').firstMatch(t);
-    if (m == null) return 1;
-    final n = int.parse(m.group(2)!);
-    if (n < 1) return null;
-    return n.clamp(1, 10);
+    final r = readVote(text, botName: botName);
+    return r.vote == true ? r.seats : null;
   }
 
   /// Tìm người chơi tương ứng với người gửi Zalo.
@@ -122,8 +172,14 @@ class ZaloVoteSync {
   }) async {
     await rememberChats(store, updates);
     final session = target ?? pickTarget(store.sessions);
-    // Chưa có buổi nào đang mở vote → tin vote không được tính (bỏ qua).
+    // Chưa có buổi nào đang mở vote → báo lại cho người vote thay vì im lặng.
     if (session == null) {
+      for (final u in updates) {
+        final r = readVote(u.text, botName: store.settings.zaloBotName);
+        if (r.vote == null && !r.isError) continue; // không phải tin vote
+        await _reply(store, u.chatId,
+            r.isError ? r.error! : noOpenVoteText);
+      }
       return ZaloSyncResult(target: null, ignoredCount: updates.length);
     }
     // Chỉ nhận tin gửi SAU khi buổi chơi được tạo (trừ 1 phút lệch giờ).
@@ -209,7 +265,14 @@ class ZaloVoteSync {
         lateCount++;
         continue;
       }
-      final vote = parseVote(u.text, botName: settings.zaloBotName);
+      final reading = readVote(u.text, botName: settings.zaloBotName);
+      // Gõ số sai ("10", "01", "1,2,3"...) → báo lại, không tính vote.
+      if (reading.isError) {
+        ignored++;
+        await _reply(store, u.chatId, reading.error!);
+        continue;
+      }
+      final vote = reading.vote;
       var player = matchPlayer(
           zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
       // Người vừa được tự tạo trong cùng đợt (stream chưa kịp cập nhật).
@@ -219,7 +282,7 @@ class ZaloVoteSync {
 
       // Số suất: "2" = đi kèm 1 người đính kèm. Kiểm tra chỗ còn trống (tính cả
       // đính kèm). Người đã "đi" chỉ bị chặn nếu xin THÊM suất mà không còn chỗ.
-      final count = vote == true ? (parseVoteCount(u.text, botName: settings.zaloBotName) ?? 1) : 0;
+      final count = vote == true ? reading.seats : 0;
       if (vote == true && session.maxPlayers != null) {
         var seats = 0;
         votes.forEach((pid, v) {
@@ -397,6 +460,22 @@ class ZaloVoteSync {
     return notes.join('; ');
   }
 
+  /// Câu báo khi có người vote lúc chưa có buổi nào đang mở vote.
+  static const noOpenVoteText =
+      '📭 Hiện chưa có buổi nào đang mở vote. Chờ quản lý tạo buổi rồi vote nhé!';
+
+  /// Trả lời người gửi trong chat Zalo. Ở chế độ webhook thì webhook đã trả
+  /// lời ngay rồi, app không nhắn lại nữa cho khỏi trùng.
+  static Future<void> _reply(TeamStore store, String chatId, String text) async {
+    final s = store.settings;
+    if (s.zaloWebhookMode || !s.hasZaloBot || chatId.isEmpty) return;
+    try {
+      await ZaloBotService.forTeam(s, store.repo.teamId).sendMessage(chatId, text);
+    } catch (_) {
+      // Không gửi được thì thôi, không chặn việc xử lý các tin còn lại.
+    }
+  }
+
   /// Ghi nhớ các chat (nhóm / riêng) bot từng nhận tin để người dùng chọn nhóm.
   static Future<void> rememberChats(TeamStore store, List<ZaloUpdate> updates) async {
     if (updates.isEmpty) return;
@@ -449,4 +528,21 @@ class ZaloVoteSync {
         .toList();
     return store.repo.updateSessionFields(session.id, {'zaloPending': remaining});
   }
+}
+
+/// Kết quả đọc một tin nhắn vote từ Zalo.
+class VoteReading {
+  /// true = đi, false = không đi, null = không hiểu.
+  final bool? vote;
+
+  /// Số suất khi "đi" (1 = đi một mình, 2 = kèm 1 người đính kèm...).
+  final int seats;
+
+  /// Tin có dạng con số nhưng sai cú pháp ("10", "01", "1,2,3"...).
+  /// Có giá trị thì bot báo lại cho người gửi thay vì im lặng bỏ qua.
+  final String? error;
+
+  const VoteReading(this.vote, {this.seats = 0, this.error});
+
+  bool get isError => error != null;
 }
