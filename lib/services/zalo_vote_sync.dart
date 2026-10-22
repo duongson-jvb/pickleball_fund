@@ -2,6 +2,7 @@ import '../models/models.dart';
 import '../utils/text.dart';
 import 'team_store.dart';
 import 'zalo_bot_service.dart';
+import 'zalo_commands.dart';
 
 /// Kết quả một lần đồng bộ vote từ Zalo.
 class ZaloSyncResult {
@@ -110,6 +111,19 @@ class ZaloVoteSync {
     // Sắp xếp theo thời gian để tin sau ghi đè tin trước.
     final sorted = [...updates]..sort((a, b) => a.date.compareTo(b.date));
     for (final u in sorted) {
+      // Lệnh "@bot help": trả lời hướng dẫn (khi app tự hỏi Zalo), không tính vote.
+      if (ZaloCommands.isCommand(u.text)) {
+        ignored++;
+        if (!settings.zaloWebhookMode && settings.hasZaloBot) {
+          try {
+            await ZaloBotService.forTeam(settings, store.repo.teamId)
+                .sendMessage(u.chatId, ZaloCommands.helpText);
+          } catch (_) {
+            // Không gửi được thì bỏ qua, không chặn việc nhận vote.
+          }
+        }
+        continue;
+      }
       final inScope = u.chatId == groupId || !u.isGroup || groupId.isEmpty;
       if (!inScope || u.text.trim().isEmpty) {
         ignored++;
