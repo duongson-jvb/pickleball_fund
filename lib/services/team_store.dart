@@ -82,34 +82,20 @@ class TeamStore extends ChangeNotifier {
     try {
       final docs = _pendingInbox;
       final updates = <ZaloUpdate>[];
-      final idOf = <String, String>{}; // messageId -> docId
       for (final d in docs) {
         final u = ZaloUpdate.fromInboxDoc(d.id, d.data());
-        if (u != null) {
-          updates.add(u);
-          idOf[u.messageId] = d.id;
-        }
+        if (u != null) updates.add(u);
       }
-      final keep = <String>{};
       if (updates.isNotEmpty) {
         final r = await ZaloVoteSync.apply(this, updates);
         if (r.appliedNames.isNotEmpty) {
           lastZaloInboxSummary = 'Đã nhận vote từ Zalo: ${r.appliedNames.join(', ')}'
               '${r.createdNames.isNotEmpty ? ' · tự thêm: ${r.createdNames.join(', ')}' : ''}';
         }
-        // Chưa có buổi nào đang vote: giữ lại tin giống vote tối đa 3 ngày,
-        // để khi tạo buổi mới sẽ được tính.
-        final cutoff = DateTime.now().subtract(const Duration(days: 3));
-        for (final u in updates) {
-          if (r.unprocessedIds.contains(u.messageId) && u.date.isAfter(cutoff)) {
-            keep.add(idOf[u.messageId]!);
-          }
-        }
       }
-      final toDelete = docs.map((d) => d.id).where((id) => !keep.contains(id)).toList();
-      // Giữ lại các tin chưa xử lý để lần sau (khi có buổi vote) tính tiếp.
-      _pendingInbox = docs.where((d) => keep.contains(d.id)).toList();
-      if (toDelete.isNotEmpty) await repo.deleteZaloInbox(toDelete);
+      // Tin đã xử lý (kể cả tin bị bỏ qua vì chưa có buổi / gửi trước khi tạo buổi) → xoá.
+      _pendingInbox = [];
+      await repo.deleteZaloInbox(docs.map((d) => d.id));
       notifyListeners();
     } catch (_) {
       // Lỗi mạng: tin vẫn còn trong hộp thư, lần sau xử lý lại.

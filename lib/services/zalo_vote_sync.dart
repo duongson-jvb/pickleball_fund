@@ -10,16 +10,13 @@ class ZaloSyncResult {
   final List<String> appliedNames; // người đã cập nhật vote
   final List<String> createdNames; // người chơi vừa tự tạo từ Zalo
   final int pendingCount; // tin chưa khớp được tên
-  final int ignoredCount; // tin không thuộc nhóm / không phải vote
-  /// Tin giống vote nhưng chưa có buổi nào đang vote để nhận → nên giữ lại.
-  final List<String> unprocessedIds;
+  final int ignoredCount; // tin không thuộc nhóm / gửi trước khi tạo buổi / không phải vote
   const ZaloSyncResult({
     required this.target,
     this.appliedNames = const [],
     this.createdNames = const [],
     this.pendingCount = 0,
     this.ignoredCount = 0,
-    this.unprocessedIds = const [],
   });
 
   bool get isEmpty => appliedNames.isEmpty && pendingCount == 0;
@@ -90,18 +87,12 @@ class ZaloVoteSync {
   }) async {
     await rememberChats(store, updates);
     final session = target ?? pickTarget(store.sessions);
+    // Chưa có buổi nào đang mở vote → tin vote không được tính (bỏ qua).
     if (session == null) {
-      final botName = store.settings.zaloBotName;
-      final voteLike = updates
-          .where((u) => parseVote(u.text, botName: botName) != null)
-          .map((u) => u.messageId)
-          .toList();
-      return ZaloSyncResult(
-        target: null,
-        ignoredCount: updates.length - voteLike.length,
-        unprocessedIds: voteLike,
-      );
+      return ZaloSyncResult(target: null, ignoredCount: updates.length);
     }
+    // Chỉ nhận tin gửi SAU khi buổi chơi được tạo (trừ 1 phút lệch giờ).
+    final openedAt = session.createdAt.subtract(const Duration(minutes: 1));
     final settings = store.settings;
     final groupId = settings.zaloGroupId;
 
@@ -129,7 +120,7 @@ class ZaloVoteSync {
         continue;
       }
       final inScope = u.chatId == groupId || !u.isGroup || groupId.isEmpty;
-      if (!inScope || u.text.trim().isEmpty) {
+      if (!inScope || u.text.trim().isEmpty || u.date.isBefore(openedAt)) {
         ignored++;
         continue;
       }
