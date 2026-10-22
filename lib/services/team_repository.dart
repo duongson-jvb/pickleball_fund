@@ -229,19 +229,21 @@ class TeamRepository {
   Future<void> deleteLedgerEntry(String id) => ledger.doc(id).delete();
 
   // ------------------------------------------------------------ drink types
-  Future<void> addDrinkType(String name, int price) => drinkTypes.add({
+  Future<void> addDrinkType(String name, int price, {int code = 0}) => drinkTypes.add({
         'name': name.trim(),
         'active': true,
+        'code': code,
         'prices': [
           DrinkPrice(date: DateTime.now(), price: price).toMap(),
         ],
       });
 
   Future<void> updateDrinkType(DrinkType type,
-      {String? name, bool? active}) =>
+      {String? name, bool? active, int? code}) =>
       drinkTypes.doc(type.id).update({
         'name': ?name?.trim(),
         'active': ?active,
+        'code': ?code,
       });
 
   /// Thêm / sửa giá nước hiệu lực từ một ngày.

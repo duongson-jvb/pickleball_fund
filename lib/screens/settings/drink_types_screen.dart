@@ -47,7 +47,10 @@ class DrinkTypesScreen extends StatelessWidget {
         ],
       ),
     );
-    if (ok == true) await store.repo.addDrinkType(name.text, parseAmount(price.text));
+    if (ok == true) {
+      await store.repo.addDrinkType(name.text, parseAmount(price.text),
+          code: store.nextDrinkCode);
+    }
   }
 
   @override
@@ -78,8 +81,12 @@ class DrinkTypesScreen extends StatelessWidget {
                 ),
                 for (final t in types)
                   ListTile(
-                    leading: Icon(Icons.local_drink,
-                        color: t.active ? null : Colors.grey),
+                    leading: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: t.active ? null : Colors.grey.shade300,
+                      child: Text(t.codeLabel.isEmpty ? '?' : t.codeLabel,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    ),
                     title: Text(t.name,
                         style: t.active
                             ? null
@@ -155,7 +162,7 @@ class DrinkTypeDetailScreen extends StatelessWidget {
     final history = t.prices.reversed.toList();
     return Scaffold(
       appBar: AppBar(
-        title: Text(t.name),
+        title: Text(t.codeLabel.isEmpty ? t.name : '${t.codeLabel} · ${t.name}'),
         actions: [
           IconButton(
             tooltip: 'Đổi tên',

@@ -62,6 +62,38 @@ void main() {
     });
   });
 
+  group('Mã ngắn N1/N2 và danh sách nước', () {
+    final rv1 = DrinkType(id: 'rv', name: 'Revive', code: 1,
+        prices: [DrinkPrice(date: DateTime(2026), price: 15000)]);
+    final su2 = DrinkType(id: 'su', name: 'Nước suối', code: 2,
+        prices: [DrinkPrice(date: DateTime(2026), price: 10000)]);
+
+    test('gõ theo mã: "N1 2, n2 1", "+1 #1"', () {
+      final c = ZaloDrinks.parse('N1 2, n2 1', [rv1, su2]);
+      expect({for (final x in c.changes) x.drinkTypeId: x.qty}, {'rv': 2, 'su': 1});
+      final c2 = ZaloDrinks.parse('+1 #1', [rv1, su2]);
+      expect(c2.changes.single.drinkTypeId, 'rv');
+      expect(c2.changes.single.relative, isTrue);
+      expect(ZaloDrinks.looksLikeDrink('N1 2', [rv1, su2]), isTrue);
+    });
+
+    test('"@bot nước" là yêu cầu xem danh sách, "nước 2" thì không', () {
+      expect(ZaloDrinks.isListRequest('@Bot PickleBall JVB nước', botName: 'Bot PickleBall JVB'), isTrue);
+      expect(ZaloDrinks.isListRequest('nước?'), isTrue);
+      expect(ZaloDrinks.isListRequest('giá nước'), isTrue);
+      expect(ZaloDrinks.isListRequest('nước 2'), isFalse);
+      expect(ZaloDrinks.isListRequest('1'), isFalse);
+    });
+
+    test('danh sách có mã, tên, giá theo ngày, sắp theo mã', () {
+      final text = ZaloDrinks.listText([su2, rv1], on: DateTime(2026, 6, 1));
+      expect(text, contains('N1 · Revive · 15.000đ'));
+      expect(text, contains('N2 · Nước suối · 10.000đ'));
+      expect(text.indexOf('N1'), lessThan(text.indexOf('N2')));
+      expect(text, contains('"N1 2"'));
+    });
+  });
+
   group('ZaloDrinks.applyChanges / pickSession', () {
     test('áp dụng đặt và cộng, về 0 thì xoá', () {
       var d = ZaloDrinks.applyChanges({}, 'p', [const DrinkChange('rv', 2)]);

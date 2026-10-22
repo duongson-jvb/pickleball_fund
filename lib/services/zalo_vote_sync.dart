@@ -141,8 +141,21 @@ class ZaloVoteSync {
         continue;
       }
 
-      // Lệnh ghi nước ("nước 2", "revive 2, suối 1", "+1 revive") → ghi vào buổi
-      // gần nhất người đó tham gia, tính lại tiền, bot trả lời xác nhận.
+      // "@bot nước" → gửi danh sách nước (mã, tên, giá). Ở chế độ webhook thì
+      // Worker đã trả lời ngay; ở đây xử lý cho chế độ app tự hỏi Zalo.
+      if (ZaloDrinks.isListRequest(u.text, botName: settings.zaloBotName)) {
+        ignored++;
+        if (!settings.zaloWebhookMode && settings.hasZaloBot) {
+          try {
+            await ZaloBotService.forTeam(settings, store.repo.teamId)
+                .sendMessage(u.chatId, ZaloDrinks.listText(store.drinkTypes, on: u.date));
+          } catch (_) {}
+        }
+        continue;
+      }
+
+      // Lệnh ghi nước ("nước 2", "N1 2", "revive 2, suối 1", "+1 revive") → ghi vào
+      // buổi gần nhất người đó tham gia, tính lại tiền, bot trả lời xác nhận.
       if (ZaloDrinks.looksLikeDrink(u.text, store.drinkTypes, botName: settings.zaloBotName)) {
         ignored++;
         final note = await _handleDrink(store, u);

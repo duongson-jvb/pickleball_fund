@@ -128,21 +128,57 @@ class ZaloDrinks {
     return out;
   }
 
-  /// Các tên gọi (đã bỏ dấu) của một loại nước: tên đầy đủ và tên bỏ chữ "nước".
-  /// "Nước suối" → ["nuoc suoi", "suoi"]; "Revive" → ["revive"].
+  /// Các tên gọi (đã bỏ dấu) của một loại nước: tên đầy đủ, tên bỏ chữ "nước",
+  /// và mã ngắn ("n1", "#1"). "Nước suối" (N2) → ["nuoc suoi", "suoi", "n2", "#2"].
   static List<String> aliases(DrinkType d) {
     final full = normalizeVi(d.name);
     final out = <String>[];
     if (full.isNotEmpty) out.add(full);
     final short = full.replaceFirst(RegExp(r'^nuoc\s+'), '').trim();
     if (short.isNotEmpty && short != full) out.add(short);
+    if (d.code > 0) out.addAll(['n${d.code}', '#${d.code}']);
     return out;
+  }
+
+  static final _listWords = RegExp(
+      r'^(nuoc|drink|menu nuoc|danh sach nuoc|nuoc menu|gia nuoc|bang gia|bang gia nuoc|list nuoc|ds nuoc)$');
+
+  /// "@bot nước" (không kèm số) → yêu cầu xem danh sách nước.
+  static bool isListRequest(String text, {String botName = ''}) {
+    final t = _clean(text, botName).replaceAll('?', '').trim();
+    return _listWords.hasMatch(t);
+  }
+
+  /// Danh sách nước kèm mã và giá, gửi lên Zalo.
+  static String listText(List<DrinkType> types, {DateTime? on}) {
+    final active = types.where((d) => d.active).toList()
+      ..sort((a, b) => (a.code == 0 ? 1 << 20 : a.code).compareTo(b.code == 0 ? 1 << 20 : b.code));
+    if (active.isEmpty) return '🥤 Nhóm chưa có loại nước nào. Quản lý thêm trong app → Cài đặt → Loại nước & giá.';
+    final day = on ?? DateTime.now();
+    final sb = StringBuffer('🥤 DANH SÁCH NƯỚC\n');
+    for (final d in active) {
+      final code = d.codeLabel.isEmpty ? '•' : d.codeLabel;
+      sb.writeln('$code · ${d.name} · ${_vnd(d.priceOn(day))}');
+    }
+    sb.writeln('Ghi nước: "N1 2" hoặc "${active.first.name} 2"; nhiều loại: "N1 2, N2 1"; cộng thêm: "+1 N1"');
+    return sb.toString().trimRight();
+  }
+
+  static String _vnd(int v) {
+    final s = v.toString();
+    final sb = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) sb.write('.');
+      sb.write(s[i]);
+    }
+    sb.write('đ');
+    return sb.toString();
   }
 
   static String _clean(String text, String botName) {
     var t = normalizeVi(text);
     if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
-    t = t.replaceAll(RegExp(r'@\S+'), ' ').replaceAll(RegExp(r'[.!?:;]+'), ' ');
+    t = t.replaceAll(RegExp(r'@\S*'), ' ').replaceAll(RegExp(r'[.!?:;]+'), ' ');
     return t.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 }
