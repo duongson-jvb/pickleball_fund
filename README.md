@@ -3,6 +3,8 @@
 Ứng dụng quản lý quỹ cho team pickleball, viết bằng Flutter, dữ liệu realtime trên Firebase Firestore.
 Chạy được trên iOS, Android và Web (bản web được deploy tự động lên GitHub Pages).
 
+👉 **Tổng hợp đầy đủ tính năng, lệnh Zalo Bot và vận hành: [FEATURES.md](FEATURES.md).**
+
 ## Tính năng
 
 - **Người chơi**: thêm / sửa / xoá, tạm ngưng hoạt động.
