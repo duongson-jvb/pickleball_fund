@@ -76,6 +76,7 @@ Future<TeamStore> bootStore({bool configured = true}) async {
     // Chế độ webhook để tab Vote không tự long-polling trong test.
     'zaloWebhookUrl': 'https://example.workers.dev/smoke-team',
     'zaloWebhookSecret': 'secret123',
+    'zaloWebhookEnabled': true,
     'zaloChats': {
       'g1': {'chatId': 'g1', 'isGroup': true, 'lastFromName': 'An', 'lastText': '@bot', 'lastDate': DateTime.now()},
     },

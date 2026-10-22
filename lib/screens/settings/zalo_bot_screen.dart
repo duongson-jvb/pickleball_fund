@@ -108,12 +108,24 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     });
     try {
       final msg = await _bot(store, workerUrl: url, secret: secret).setWebhook(url, secret);
+      final verified = msg.startsWith('✅') || msg.startsWith('Đã');
       await store.repo.updateSettings({
         'zaloWebhookUrl': url,
         'zaloWebhookSecret': secret,
+        // Chỉ chuyển sang chế độ webhook khi Zalo xác minh thành công;
+        // nếu không, app vẫn tự hỏi Zalo qua proxy để không mất vote.
+        'zaloWebhookEnabled': verified,
       });
+      if (!verified) {
+        // Zalo chặn getUpdates khi còn webhook → gỡ để app tự hỏi được.
+        try {
+          await _bot(store, workerUrl: url, secret: secret).deleteWebhook();
+        } catch (_) {}
+      }
       _webhookUrl.text = url;
-      setState(() => _status = 'Webhook: $msg');
+      setState(() => _status = verified
+          ? 'Webhook: $msg'
+          : 'Webhook chưa dùng được: $msg\nApp tiếp tục tự hỏi Zalo qua Worker (đã lưu URL/secret).');
     } catch (e) {
       setState(() => _status = '❌ $e');
     } finally {
@@ -126,7 +138,8 @@ class _ZaloBotScreenState extends State<ZaloBotScreen> {
     setState(() => _busy = true);
     try {
       await _bot(store).deleteWebhook();
-      await store.repo.updateSettings({'zaloWebhookUrl': ''});
+      // Giữ URL/secret để bản web vẫn dùng Worker làm proxy khi tự hỏi Zalo.
+      await store.repo.updateSettings({'zaloWebhookEnabled': false});
       setState(() => _status = 'Đã tắt webhook, app quay lại tự hỏi Zalo (getUpdates).');
     } catch (e) {
       setState(() => _status = '❌ $e');

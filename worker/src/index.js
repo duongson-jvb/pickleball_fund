@@ -44,15 +44,18 @@ export default {
 
     // Xác thực secret (Zalo gửi kèm khi webhook, app gửi kèm khi proxy).
     const secret = request.headers.get('X-Bot-Api-Secret-Token') || '';
-    if (env.ZALO_SECRET && secret !== env.ZALO_SECRET) {
-      return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
-    }
+    const secretOk = !env.ZALO_SECRET || secret === env.ZALO_SECRET;
+    // Log gọn để soi bằng `wrangler tail` (không in giá trị secret).
+    console.log(`POST ${url.pathname} ua="${request.headers.get('User-Agent') || ''}" ` +
+      `secretHeader=${secret ? 'yes' : 'no'} secretOk=${secretOk}`);
+
     if (!teamId || teamId.length < 6) {
       return json({ ok: false, error: 'Thiếu teamId trong URL (/<teamId>)' }, 400);
     }
 
-    // ---- Proxy: /<teamId>/zalo/<method>
+    // ---- Proxy: /<teamId>/zalo/<method>  (bắt buộc đúng secret)
     if (parts[1] === 'zalo' && parts[2]) {
+      if (!secretOk) return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
       return proxyZalo(parts[2], request);
     }
 
@@ -61,8 +64,13 @@ export default {
     try {
       body = await request.json();
     } catch {
-      // Request kiểm tra của Zalo lúc setWebhook có thể không có JSON.
+      // Request kiểm tra của Zalo lúc setWebhook không có JSON và có thể
+      // không kèm secret → trả 200 để xác minh thành công (không có dữ liệu gì).
       return json({ ok: true, note: 'no json body' });
+    }
+    if (!secretOk) {
+      console.log('Webhook bị từ chối: sai hoặc thiếu X-Bot-Api-Secret-Token');
+      return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
     }
 
     const result = body?.result ?? body ?? {};
