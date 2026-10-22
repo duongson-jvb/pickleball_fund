@@ -172,25 +172,21 @@ class ZaloVoteSync {
   }) async {
     await rememberChats(store, updates);
     final session = target ?? pickTarget(store.sessions);
-    // Chưa có buổi nào đang mở vote → báo lại cho người vote thay vì im lặng.
-    if (session == null) {
-      for (final u in updates) {
-        final r = readVote(u.text, botName: store.settings.zaloBotName);
-        if (r.vote == null && !r.isError) continue; // không phải tin vote
-        await _reply(store, u.chatId,
-            r.isError ? r.error! : noOpenVoteText);
-      }
-      return ZaloSyncResult(target: null, ignoredCount: updates.length);
-    }
+    // Không có buổi nào đang mở vote thì VẪN xử lý lệnh (ghi nước, quỹ, help) -
+    // ghi nước là việc làm sau buổi chơi, lúc đó buổi đã chốt từ lâu. Chỉ riêng
+    // tin vote là không ghi được, và được báo lại cho người gửi.
     // Chỉ nhận tin gửi SAU khi buổi chơi được tạo (trừ 1 phút lệch giờ).
-    final openedAt = session.createdAt.subtract(const Duration(minutes: 1));
+    final openedAt =
+        session?.createdAt.subtract(const Duration(minutes: 1)) ?? DateTime(2100);
     final settings = store.settings;
     final groupId = settings.zaloGroupId;
 
-    final votes = {...session.votes};
-    final voteTimes = {...session.voteTimes};
-    final companions = {...session.companions};
-    final pending = {for (final p in session.zaloPending) p.zaloId: p};
+    final votes = {...?session?.votes};
+    final voteTimes = {...?session?.voteTimes};
+    final companions = {...?session?.companions};
+    final pending = {
+      for (final p in session?.zaloPending ?? const <ZaloPendingVote>[]) p.zaloId: p
+    };
     final applied = <String>[];
     final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
     final createdNames = <String>[];
@@ -255,6 +251,17 @@ class ZaloVoteSync {
         continue;
       }
 
+      // Không có buổi nào đang mở vote: tin vote không ghi được → báo lại.
+      if (session == null) {
+        ignored++;
+        final r = readVote(u.text, botName: settings.zaloBotName);
+        if (r.isError) {
+          await _reply(store, u.chatId, r.error!);
+        } else if (r.vote != null) {
+          await _reply(store, u.chatId, noOpenVoteText);
+        }
+        continue;
+      }
       if (u.date.isBefore(openedAt)) {
         ignored++;
         continue;
@@ -339,7 +346,8 @@ class ZaloVoteSync {
       }
     }
 
-    if (applied.isNotEmpty || pending.length != session.zaloPending.length) {
+    if (session != null &&
+        (applied.isNotEmpty || pending.length != session.zaloPending.length)) {
       // companions ghi theo từng khoá (xoá khoá đã bỏ) để chắc chắn khoá cũ biến mất.
       final companionUpdates = <String, dynamic>{
         for (final k in {...session.companions.keys, ...companions.keys})

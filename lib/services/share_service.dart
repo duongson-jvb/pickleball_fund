@@ -100,7 +100,10 @@ class ShareService {
     final sb = StringBuffer('🏓 ${s.title.isEmpty ? 'BUỔI CHƠI' : s.title.toUpperCase()}\n');
     sb.writeln('📅 ${fmtWeekday(s.date)}');
     if (s.location.isNotEmpty) sb.writeln('📍 ${s.location}');
+    // Đếm cả người đính kèm, nếu không thì dòng này nói "2 người chơi" trong khi
+    // tiền sân chia cho 4 suất - người đọc không hiểu vì sao có người trả gấp đôi.
     sb.writeln('👥 ${s.playerIds.length} người chơi'
+        '${s.totalCompanions > 0 ? ' + ${s.totalCompanions} đính kèm' : ''}'
         '${s.guestCount > 0 ? ' + ${s.guestCount} khách' : ''}');
     if (s.courtFee > 0) {
       sb.writeln('💵 Tiền sân: ${vnd(s.courtFee)}'
