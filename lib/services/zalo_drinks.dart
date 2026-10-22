@@ -30,9 +30,11 @@ class ZaloDrinks {
 
   static final _nuocWord = RegExp(r'(^|\s)(nuoc|drink)(\s|$)');
 
-  /// Có phải tin về nước không (để không nhầm thành vote).
+  /// Có phải tin ghi nước không (để không nhầm thành vote). Tin ghi nước luôn
+  /// có chữ số; "nước" không kèm số là yêu cầu xem danh sách (xử lý riêng).
   static bool looksLikeDrink(String text, List<DrinkType> types, {String botName = ''}) {
     final t = _clean(text, botName);
+    if (!RegExp(r'\d').hasMatch(t)) return false;
     if (_nuocWord.hasMatch(t)) return true;
     for (final d in types) {
       for (final n in aliases(d)) {

@@ -88,8 +88,10 @@ export default {
       return replyHelp(env, teamId, String(chatId));
     }
     // "@bot nước" (không kèm số) → trả danh sách nước kèm mã và giá ngay.
-    if (isDrinkListRequest(text)) {
-      return replyDrinkList(env, teamId, String(chatId));
+    // Phải bỏ tên bot (có dấu cách) khỏi tin nên cần đọc zaloBotName từ Firestore.
+    if (mayBeDrinkListRequest(text)) {
+      const r = await replyDrinkList(env, teamId, String(chatId), text);
+      if (r) return r;
     }
 
     const messageId = String(msg.message_id || crypto.randomUUID());
@@ -181,9 +183,20 @@ function normalizeVi(str) {
     .trim();
 }
 
-function isDrinkListRequest(text) {
-  const t = normalizeVi(text).replace(/@\S+/g, ' ').replace(/[?!.,:]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return /^(nuoc|drink|menu nuoc|danh sach nuoc|nuoc menu|gia nuoc|bang gia|bang gia nuoc|list nuoc|ds nuoc)$/.test(t);
+const DRINK_LIST_RE = /^(nuoc|drink|menu nuoc|danh sach nuoc|nuoc menu|gia nuoc|bang gia|bang gia nuoc|list nuoc|ds nuoc)$/;
+
+/** Sàng nhanh: có từ "nuoc"/"gia"/... và không có chữ số (tin ghi nước luôn có số). */
+function mayBeDrinkListRequest(text) {
+  const t = normalizeVi(text).replace(/[?!.,:]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return !/\d/.test(t) && /(^|\s)(nuoc|drink|bang gia|gia nuoc)(\s|$)/.test(t);
+}
+
+/** Bỏ tên bot, @mention, dấu câu rồi so với các mẫu "nước". */
+function isDrinkListRequest(text, botName) {
+  let t = normalizeVi(text);
+  if (botName) t = t.split(normalizeVi(botName)).join(' ');
+  t = t.replace(/@\S*/g, ' ').replace(/[?!.,:]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return DRINK_LIST_RE.test(t);
 }
 
 function fmtVnd(v) {
@@ -191,12 +204,16 @@ function fmtVnd(v) {
 }
 
 /** Đọc token + danh sách nước của nhóm từ Firestore, trả lời danh sách kèm mã và giá. */
-async function replyDrinkList(env, teamId, chatId) {
+async function replyDrinkList(env, teamId, chatId, text) {
   const base = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}` +
     `/databases/(default)/documents/teams/${encodeURIComponent(teamId)}`;
-  const teamRes = await fetch(`${base}?key=${env.FIREBASE_API_KEY}&mask.fieldPaths=zaloBotToken`);
-  if (!teamRes.ok) return json({ ok: true, drinks: 'team-not-found' });
-  const token = (await teamRes.json())?.fields?.zaloBotToken?.stringValue || '';
+  const teamRes = await fetch(`${base}?key=${env.FIREBASE_API_KEY}&mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloBotName`);
+  if (!teamRes.ok) return null;
+  const tf = (await teamRes.json())?.fields || {};
+  const token = tf.zaloBotToken?.stringValue || '';
+  const botName = tf.zaloBotName?.stringValue || '';
+  // Không đúng là lệnh xem danh sách → trả null để xử lý như tin thường.
+  if (!isDrinkListRequest(text, botName)) return null;
   if (!token) return json({ ok: true, drinks: 'no-token' });
 
   const listRes = await fetch(`${base}/drinkTypes?key=${env.FIREBASE_API_KEY}&pageSize=100`);
@@ -217,18 +234,18 @@ async function replyDrinkList(env, teamId, chatId) {
     return { active, name, code, price };
   }).filter((x) => x.active).sort((a, b) => (a.code || 1e9) - (b.code || 1e9));
 
-  let text;
+  let reply;
   if (!items.length) {
-    text = '🥤 Nhóm chưa có loại nước nào. Quản lý thêm trong app → Cài đặt → Loại nước & giá.';
+    reply = '🥤 Nhóm chưa có loại nước nào. Quản lý thêm trong app → Cài đặt → Loại nước & giá.';
   } else {
-    text = '🥤 DANH SÁCH NƯỚC\n' +
+    reply = '🥤 DANH SÁCH NƯỚC\n' +
       items.map((x) => `${x.code ? 'N' + x.code : '•'} · ${x.name} · ${fmtVnd(x.price)}`).join('\n') +
       `\nGhi nước: "N1 2" hoặc "${items[0].name} 2"; nhiều loại: "N1 2, N2 1"; cộng thêm: "+1 N1"`;
   }
   const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text }),
+    body: JSON.stringify({ chat_id: chatId, text: reply }),
   });
   let zalo = {};
   try { zalo = await sent.json(); } catch { /* bỏ qua */ }
