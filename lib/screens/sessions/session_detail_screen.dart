@@ -238,6 +238,7 @@ class _VoteTabState extends State<_VoteTab> {
     if (r.appliedNames.isNotEmpty) parts.add('Đã nhận vote: ${r.appliedNames.join(', ')}');
     if (r.createdNames.isNotEmpty) parts.add('Tự thêm người chơi: ${r.createdNames.join(', ')}');
     if (r.fullNames.isNotEmpty) parts.add('Đủ người, không nhận: ${r.fullNames.join(', ')}');
+    if (r.drinkNotes.isNotEmpty) parts.add('Nước: ${r.drinkNotes.join('; ')}');
     if (r.lateCount > 0) parts.add('${r.lateCount} tin sau hạn vote bị bỏ qua');
     if (r.pendingCount > 0) parts.add('${r.pendingCount} tin chưa khớp tên');
     if (parts.isNotEmpty) {

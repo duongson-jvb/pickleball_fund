@@ -159,6 +159,7 @@ const HELP_TEXT = [
   '• Vote đi chơi: Reply tin vote của bot → 1 = đi, 0 = không',
   '• Đổi ý: reply lại là xong',
   '• Người mới cứ reply 1, bot tự thêm tên vào danh sách',
+  '• Ghi nước: "nước 2" hoặc "revive 2, suối 1" (+1 để cộng thêm)',
   `• Xem quỹ, tiền sân, tiền nước: ${APP_URL}`,
   '• Gõ @bot help để xem lại tin này',
 ].join('\n');

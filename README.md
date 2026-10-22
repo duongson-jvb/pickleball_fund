@@ -86,6 +86,9 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
    Người reply vote mà **chưa có trong danh sách sẽ được tự thêm** làm người chơi mới (tên theo Zalo, ghi chú "Tự thêm từ Zalo").
    Tin không rõ nghĩa (không phải 1/0/đi/không) hiện ở mục "chưa khớp" để gán tay.
    **Chỉ tính tin gửi sau khi buổi chơi được tạo**; tin gửi trước đó hoặc khi chưa có buổi nào đang vote thì bỏ qua.
+6. **Ghi nước qua Zalo**: reply/@bot `nước 2` (khi nhóm chỉ có một loại), `revive 2, suối 1`, `+1 revive` (cộng thêm), `revive 0` (xoá).
+   App ghi vào buổi gần nhất người đó tham gia (36 giờ trước → 6 giờ sau giờ chơi), tính lại tiền và bot trả lời xác nhận
+   kèm tổng tiền nước. Người chưa có trong danh sách hoặc không tìm thấy buổi thì bot báo để quản lý xử lý.
 
 Giới hạn của Zalo Bot API: bot chỉ thấy tin **reply** hoặc **@mention** bot, không sửa/xoá tin, không có nút bấm,
 tính năng bot trong nhóm đang ở giai đoạn thử nghiệm. Token lưu trong tài liệu nhóm trên Firestore (ai có mã nhóm đều đọc được).
