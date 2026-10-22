@@ -38,6 +38,7 @@ class TeamStore extends ChangeNotifier {
         drinkTypes = v;
         _loaded.add('drinks');
         notifyListeners();
+        _backfillDrinkCodes();
       }, onError: _onError),
       repo.watchSessions().listen((v) {
         sessions = v;
@@ -227,6 +228,31 @@ class TeamStore extends ChangeNotifier {
 
   List<LedgerEntry> get commonFundLedger =>
       ledger.where((e) => e.isCommonFund).toList();
+
+  /// Mã ngắn kế tiếp cho loại nước mới (N1, N2...).
+  int get nextDrinkCode =>
+      drinkTypes.fold<int>(0, (m, d) => d.code > m ? d.code : m) + 1;
+
+  bool _backfillingCodes = false;
+
+  /// Gán mã ngắn cho các loại nước cũ chưa có mã (chỉ máy quản trị ghi được).
+  Future<void> _backfillDrinkCodes() async {
+    if (_backfillingCodes || !isAdmin) return;
+    final missing = drinkTypes.where((d) => d.code <= 0).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    if (missing.isEmpty) return;
+    _backfillingCodes = true;
+    try {
+      var next = nextDrinkCode;
+      for (final d in missing) {
+        await repo.updateDrinkType(d, code: next++);
+      }
+    } catch (_) {
+      // Lần cập nhật sau sẽ thử lại.
+    } finally {
+      _backfillingCodes = false;
+    }
+  }
 
   /// Giá nước mặc định cho một ngày (theo lần sửa gần nhất trước ngày đó).
   Map<String, int> defaultDrinkPrices(DateTime day) => {

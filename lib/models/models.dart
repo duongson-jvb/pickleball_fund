@@ -290,13 +290,18 @@ class DrinkType {
   final String name;
   final List<DrinkPrice> prices;
   final bool active;
+  final int code; // mã ngắn để gõ trên Zalo: N1, N2... (0 = chưa gán)
 
   const DrinkType({
     required this.id,
     required this.name,
     this.prices = const [],
     this.active = true,
+    this.code = 0,
   });
+
+  /// Nhãn mã ngắn, ví dụ "N1".
+  String get codeLabel => code > 0 ? 'N$code' : '';
 
   factory DrinkType.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data() ?? {};
@@ -310,6 +315,7 @@ class DrinkType {
       name: (d['name'] as String?) ?? '',
       prices: prices,
       active: (d['active'] as bool?) ?? true,
+      code: _toInt(d['code']),
     );
   }
 
