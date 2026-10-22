@@ -34,8 +34,25 @@ npx vercel link --project pickleball-zalo-webhook
 npx vercel env add ZALO_SECRET production
 npx vercel env add FIREBASE_PROJECT_ID production   # pickleball-fund-phm
 npx vercel env add FIREBASE_API_KEY production      # Web API key của Firebase
+npx vercel env add BOT_REFRESH_TOKEN production     # xem bên dưới - thiếu thì bot không ghi vote ngay
 npx vercel deploy --prod
 ```
+
+### `BOT_REFRESH_TOKEN` — để bot ghi vote thẳng vào buổi
+
+Webhook cần một tài khoản Firebase để ghi vote (Firestore rules không cho ghi khi chưa đăng nhập).
+**Thiếu biến này bot vẫn chạy**, nhưng không ghi vote ngay được: tin vào `zaloInbox` và app ghi hộ
+khi quản lý mở, người vote nhận câu "đã nhận vote, sẽ cập nhật khi quản lý mở app" thay vì xác nhận
+"đã có N suất".
+
+Lấy giá trị một lần rồi đặt vào biến (tài khoản ẩn danh này dùng lại mãi):
+
+```bash
+curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=<FIREBASE_API_KEY>" \
+  -H 'Content-Type: application/json' -d '{"returnSecureToken":true}' | python3 -m json.tool
+```
+
+Lấy trường `refreshToken` trong kết quả.
 
 Xem log request: https://vercel.com → project → **Logs**.
 
