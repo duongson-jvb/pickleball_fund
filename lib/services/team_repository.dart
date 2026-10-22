@@ -213,7 +213,8 @@ class TeamRepository {
     for (final d in sessionDocs.docs) {
       final s = Session.fromDoc(d);
       if (!s.mentions(id)) continue;
-      await saveAndSettleSession(s.withoutPlayer(id));
+      // Xoá người chơi là cố ý bỏ vote của họ → không gộp lại từ máy chủ.
+      await saveAndSettleSession(s.withoutPlayer(id), keepRemoteVotes: false);
     }
 
     // 3. Gỡ khỏi các chi phí có chọn người rồi tính lại.
@@ -372,13 +373,24 @@ class TeamRepository {
   /// nên có thể gọi lại bao nhiêu lần cũng được (idempotent).
   /// Số dư quỹ chung được đọc lại từ Firestore ngay lúc tính, màn hình không
   /// cần (và không được) truyền vào.
-  Future<void> saveAndSettleSession(Session session) =>
-      _chained(() => _settleSession(session));
+  /// [keepRemoteVotes] = false khi người gọi CỐ Ý bỏ vote (xoá người chơi).
+  /// Mặc định true: giữ lại vote mà webhook vừa ghi trong lúc màn hình đang
+  /// cầm bản chụp cũ.
+  Future<void> saveAndSettleSession(Session session,
+          {bool keepRemoteVotes = true}) =>
+      _chained(() => _settleSession(session, keepRemoteVotes));
 
-  Future<void> _settleSession(Session raw) async {
+  Future<void> _settleSession(Session raw, bool keepRemoteVotes) async {
+    // Vote do webhook ghi thẳng vào Firestore có thể tới SAU lúc màn hình chụp
+    // bản này. Ghi đè cả tài liệu sẽ làm mất chúng, nên gộp lại trước khi ghi.
+    var merged = raw;
+    if (keepRemoteVotes) {
+      final current = await sessions.doc(raw.id).get();
+      if (current.exists) merged = raw.mergeNewerVotes(Session.fromDoc(current));
+    }
     // Dọn nước của người đính kèm đã bị bỏ trước khi tính: nếu không, người
     // vote vẫn bị trừ tiền nước của một người không còn đi buổi này.
-    final session = raw.pruneCompanionDrinks();
+    final session = merged.pruneCompanionDrinks();
     final settlement = Settlement.computeSession(
       session: session,
       commonFundAvailable: await _commonFundExcluding(session.id),

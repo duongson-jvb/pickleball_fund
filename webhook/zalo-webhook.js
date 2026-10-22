@@ -458,25 +458,52 @@ const EMPTY_MENTION_TEXT = '👋 Em đây! Gõ "help" để xem cách dùng, "vo
 const FALLBACK_TEXT = '😅 Em chưa hiểu ý anh/chị. Gõ "help" để xem các lệnh, hoặc hỏi lại em bằng câu khác nhé.';
 
 /** Token đăng nhập (ẩn danh) để webhook ghi vote vào Firestore theo rules. */
+/**
+ * Token đăng nhập để webhook ghi vote thẳng vào Firestore.
+ *
+ * CHỈ dùng BOT_REFRESH_TOKEN. Trước đây có đường dự phòng gọi `accounts:signUp`
+ * khi thiếu biến này, nhưng nó tạo một tài khoản ẩn danh MỚI cho MỖI lượt vote:
+ * tài khoản rác tích luỹ vĩnh viễn trong Firebase Auth, và `accounts:signUp`
+ * bị giới hạn tần suất theo IP (Vercel dùng IP chung) nên đủ nhiều là vote lặng
+ * lẽ rơi xuống đường hộp thư. Thiếu biến thì thà không ghi: tin vào hộp thư và
+ * app ghi hộ khi quản lý mở - người vote vẫn nhận được lời báo đã nhận.
+ *
+ * Lấy giá trị cho BOT_REFRESH_TOKEN (chạy một lần, rồi đặt vào biến môi trường
+ * Vercel; tài khoản ẩn danh này dùng lại mãi):
+ *   curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=<FIREBASE_API_KEY>" \
+ *     -H 'Content-Type: application/json' -d '{"returnSecureToken":true}' | python3 -m json.tool
+ */
+let cachedBotToken = null; // { token, refreshToken, expiresAt } - dùng lại trong cùng một instance
+
 async function getBotIdToken(env) {
-  if (env.BOT_REFRESH_TOKEN) {
-    const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${env.FIREBASE_API_KEY}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: env.BOT_REFRESH_TOKEN }),
-    });
-    const data = await res.json();
-    if (res.ok && data.id_token) return data.id_token;
-    console.log('refresh token failed', res.status, JSON.stringify(data).slice(0, 200));
+  const now = Date.now();
+  if (!env.BOT_REFRESH_TOKEN) {
+    cachedBotToken = null;
+    console.log('BOT_REFRESH_TOKEN chưa đặt → không ghi vote thẳng được, tin vào hộp thư cho app xử lý.');
+    return '';
   }
-  // Dự phòng: tạo phiên ẩn danh mới.
-  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${env.FIREBASE_API_KEY}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }),
+  // Đệm theo đúng refresh token đang dùng: đổi/thu hồi biến môi trường là
+  // token đệm hết hiệu lực ngay, không phải chờ hết hạn.
+  if (cachedBotToken && cachedBotToken.refreshToken === env.BOT_REFRESH_TOKEN &&
+      cachedBotToken.expiresAt > now + 60_000) {
+    return cachedBotToken.token;
+  }
+  const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${env.FIREBASE_API_KEY}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: env.BOT_REFRESH_TOKEN }),
   });
   const data = await res.json();
-  if (res.ok && data.idToken) {
-    console.log('anonymous signUp used; set BOT_REFRESH_TOKEN to', data.refreshToken ? 'the printed refresh token' : '?');
-    return data.idToken;
+  if (res.ok && data.id_token) {
+    const ttl = (parseInt(data.expires_in || '3600', 10) || 3600) * 1000;
+    cachedBotToken = {
+      token: data.id_token,
+      refreshToken: env.BOT_REFRESH_TOKEN,
+      expiresAt: now + ttl,
+    };
+    return data.id_token;
   }
+  cachedBotToken = null;
+  console.log('refresh token failed', res.status, JSON.stringify(data).slice(0, 200));
   return '';
 }
 

@@ -7,7 +7,7 @@
 import worker from './zalo-webhook.js';
 
 const TEAM = 'team-test-01';
-const state = { sessions: [], players: [], sent: [], saved: [], patched: [], ai: 'ok' };
+const state = { sessions: [], players: [], sent: [], saved: [], patched: [], ai: 'ok' , signUps: [] };
 
 const doc = (name, fields) => ({ name: `projects/p/databases/(default)/documents/${name}`, fields });
 const priceField = (v) => ({
@@ -59,6 +59,10 @@ globalThis.fetch = async (url, opts = {}) => {
     if (state.ai === 'down') return ok({ error: { code: 500, message: 'boom' } }, 500);
     return ok({ candidates: [{ content: { parts: [{ text: 'Dạ em đây ạ.' }] } }] });
   }
+  if (u.includes('accounts:signUp')) {
+    state.signUps.push(u);
+    return ok({ idToken: 'anon', refreshToken: 'anon-rt' });
+  }
   if (u.includes('/documents/teams/')) {
     return ok(doc(`teams/${TEAM}`, {
       zaloBotName: { stringValue: 'Bot PickleBall JVB' },
@@ -75,7 +79,7 @@ const log = [];
 let fails = 0;
 
 async function send({ text, caption, from = { id: 'z1', display_name: 'An' } }) {
-  state.sent = []; state.saved = []; state.patched = [];
+  state.sent = []; state.saved = []; state.patched = []; state.signUps = [];
   const message = { message_id: 'm' + Math.random(), date: Math.floor(Date.now() / 1000), chat: { id: 'g1', chat_type: 'GROUP' }, from };
   if (text !== undefined) message.text = text;
   if (caption !== undefined) message.caption = caption;
@@ -84,7 +88,7 @@ async function send({ text, caption, from = { id: 'z1', display_name: 'An' } }) 
   }), env);
   await res.json();
   await new Promise((r) => setTimeout(r, 20));
-  return { sent: [...state.sent], saved: [...state.saved], patched: [...state.patched] };
+  return { sent: [...state.sent], saved: [...state.saved], patched: [...state.patched], signUps: [...state.signUps] };
 }
 
 /**
@@ -157,6 +161,30 @@ await check('"vote" vẫn liệt kê kèm "hết hạn"', { text: 'vote' }, { re
 console.log('\n— Ảnh kèm chú thích (nội dung ở caption) —');
 state.sessions = [sessionDoc({ status: 'closed' })];
 await check('caption "n1 2"', { caption: 'n1 2' }, { reply: 'đã nhận lệnh nước', inbox: true });
+
+console.log('\n— Thiếu BOT_REFRESH_TOKEN (không được tạo tài khoản ẩn danh) —');
+state.sessions = [sessionDoc({ max: 4 })];
+{
+  const envNoToken = { ...env };
+  delete envNoToken.BOT_REFRESH_TOKEN;
+  state.sent = []; state.saved = []; state.patched = []; state.signUps = [];
+  const message = { message_id: 'm-no-token', date: Math.floor(Date.now() / 1000),
+    chat: { id: 'g1', chat_type: 'GROUP' }, from: { id: 'z1', display_name: 'An' }, text: '1' };
+  const res = await worker.fetch(new Request(`https://h/${TEAM}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message }),
+  }), envNoToken);
+  await res.json();
+  await new Promise((r) => setTimeout(r, 20));
+  const problems = [];
+  if (state.signUps.length) problems.push('ĐÃ TẠO TÀI KHOẢN ẨN DANH');
+  if (!state.saved.length) problems.push('phải vào hộp thư cho app ghi hộ');
+  if (!state.sent.length) problems.push('KHÔNG TRẢ LỜI');
+  if (state.patched.length) problems.push('không được ghi vote khi chưa có token');
+  if (problems.length) fails++;
+  log.push(`${problems.length ? 'SAI ' : 'OK  '} ${'vote khi thiếu token'.padEnd(40)} ` +
+    `${state.sent.length ? `"${state.sent[0].slice(0, 46).replace(/\n/g, ' ')}"` : '(im lặng)'}` +
+    `${state.saved.length ? ' · hộp thư' : ''}${problems.length ? '  ← ' + problems.join('; ') : ''}`);
+}
 
 console.log(log.join('\n'));
 console.log(fails === 0 ? `\n✅ ${log.length} kịch bản đều đúng.` : `\n❌ ${fails}/${log.length} kịch bản sai.`);
