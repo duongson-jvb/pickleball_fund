@@ -217,7 +217,7 @@ class ZaloDrinks {
     if (exact.length == 1) return exact.first;
     final partial = players.where((p) {
       final pn = normalizeVi(p.name);
-      return pn.isNotEmpty && (pn.contains(n) || n.contains(pn));
+      return pn.isNotEmpty && (containsWholeWord(pn, n) || containsWholeWord(n, pn));
     }).toList();
     return partial.length == 1 ? partial.first : null;
   }

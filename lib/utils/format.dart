@@ -18,7 +18,11 @@ String fmtWeekday(DateTime d) {
   return s.isEmpty ? fmtDate(d) : s[0].toUpperCase() + s.substring(1);
 }
 
-/// Đọc số tiền người dùng nhập, chấp nhận "50.000", "50,000", "50k", "1tr".
+/// Đọc số tiền người dùng nhập, chấp nhận "50.000", "50,000", "50k", "1tr",
+/// "5.5k" (= 5.500đ), "1,5tr" (= 1.500.000đ).
+///
+/// Dấu chấm / phẩy cuối cùng được hiểu là phân cách NGHÌN khi sau nó có đúng
+/// 3 chữ số ("50.000"), và là dấu THẬP PHÂN khi sau nó có 1-2 chữ số ("5.5k").
 int parseAmount(String input) {
   var s = input.trim().toLowerCase().replaceAll(' ', '');
   if (s.isEmpty) return 0;
@@ -30,7 +34,12 @@ int parseAmount(String input) {
     multiplier = 1000;
     s = s.substring(0, s.length - 1);
   }
-  s = s.replaceAll('.', '').replaceAll(',', '.');
+  final sep = s.lastIndexOf(RegExp(r'[.,]'));
+  if (sep >= 0) {
+    final tail = s.substring(sep + 1);
+    final head = s.substring(0, sep).replaceAll(RegExp(r'[.,]'), '');
+    s = RegExp(r'^\d{1,2}$').hasMatch(tail) ? '$head.$tail' : '$head$tail';
+  }
   final v = double.tryParse(s) ?? 0;
   return (v * multiplier).round();
 }

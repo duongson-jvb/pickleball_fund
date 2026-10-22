@@ -91,9 +91,7 @@ class TeamStore extends ChangeNotifier {
           ids = ids.sublist(0, s.maxPlayers!);
         }
         await repo.saveAndSettleSession(
-          s.copyWith(status: SessionStatus.closed, playerIds: ids),
-          commonFundExcludingThis: commonFundExcluding(s.id),
-        );
+            s.copyWith(status: SessionStatus.closed, playerIds: ids));
         lastZaloInboxSummary = 'Đã tự chốt "${s.title.isEmpty ? 'buổi chơi' : s.title}" khi hết hạn vote';
         notifyListeners();
       } catch (_) {
