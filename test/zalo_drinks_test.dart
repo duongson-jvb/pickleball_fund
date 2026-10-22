@@ -94,6 +94,40 @@ void main() {
     });
   });
 
+  group('Nhập hộ bằng @tên (parseMulti)', () {
+    final rv1 = DrinkType(id: 'rv', name: 'Revive', code: 1);
+    final su2 = DrinkType(id: 'su', name: 'Nước suối', code: 2);
+    Player p(String id, String name) => Player(id: id, name: name, createdAt: DateTime(2026));
+    final players = [p('an', 'An'), p('binh', 'Nguyễn Văn Bình'), p('chi', 'Chi'), p('chien', 'Chiến')];
+
+    test('tự mình + hai người khác trong một tin, tên có dấu cách, không phân biệt hoa thường', () {
+      final r = ZaloDrinks.parseMulti(
+          '@Bot PickleBall JVB n1 2 @an N2 1 @nguyen van binh REVIVE 2, suối 1',
+          [rv1, su2], players, botName: 'Bot PickleBall JVB');
+      expect(r.length, 3);
+      expect(r[0].isSelf, isTrue);
+      expect(r[0].command.changes.single.drinkTypeId, 'rv');
+      expect(r[1].player?.id, 'an');
+      expect(r[1].command.changes.single.drinkTypeId, 'su');
+      expect(r[2].player?.id, 'binh');
+      expect({for (final c in r[2].command.changes) c.drinkTypeId: c.qty}, {'rv': 2, 'su': 1});
+    });
+
+    test('tên viết tắt duy nhất thì khớp; mơ hồ thì báo không tìm thấy', () {
+      final r = ZaloDrinks.parseMulti('@Bình N1 1 @Chi N1 1 @Hùng N1 1', [rv1, su2], players);
+      expect(r[0].player?.id, 'binh', reason: '"Bình" là một phần duy nhất của "Nguyễn Văn Bình"');
+      expect(r[1].player?.id, 'chi', reason: 'khớp chính xác "Chi" dù "Chiến" cũng chứa "chi"');
+      expect(r[2].player, isNull);
+      expect(r[2].nameText, 'hung');
+    });
+
+    test('thiếu số lượng cho người được @ → lệnh không hợp lệ', () {
+      final r = ZaloDrinks.parseMulti('@An revive', [rv1, su2], players);
+      expect(r.single.player?.id, 'an');
+      expect(r.single.command.isValid, isFalse);
+    });
+  });
+
   group('ZaloDrinks.applyChanges / pickSession', () {
     test('áp dụng đặt và cộng, về 0 thì xoá', () {
       var d = ZaloDrinks.applyChanges({}, 'p', [const DrinkChange('rv', 2)]);
@@ -165,6 +199,23 @@ void main() {
       s = store.sessions.firstWhere((x) => x.id == sid);
       expect(s.drinks.containsKey(an.id), isFalse);
       expect(store.balanceOf(an.id), 0);
+
+      // Nhập hộ: An ghi cho Bình và cho mình trong một tin, dùng mã N1/N2.
+      // Mã được máy quản trị tự gán theo thứ tự tên: N1 = Nước suối, N2 = Revive.
+      final n1 = store.drinkTypes.firstWhere((d) => d.code == 1);
+      final n2 = store.drinkTypes.firstWhere((d) => d.code == 2);
+      expect(n1.name, 'Nước suối');
+      expect(n2.name, 'Revive');
+      final binh = store.players.firstWhere((p) => p.name == 'Bình');
+      final r2 = await ZaloVoteSync.apply(
+          store, [msg('m4', 'N1 1 @Bình n2 3')], target: store.sessions.first);
+      await settle();
+      s = store.sessions.firstWhere((x) => x.id == sid);
+      expect(s.drinks[an.id], {n1.id: 1});
+      expect(s.drinks[binh.id], {n2.id: 3});
+      expect(store.balanceOf(binh.id), -3 * 15000);
+      expect(store.balanceOf(an.id), -10000);
+      expect(r2.drinkNotes.single, allOf(contains('An'), contains('Bình')));
       store.dispose();
     });
   });

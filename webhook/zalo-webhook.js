@@ -167,6 +167,7 @@ const HELP_TEXT = [
   '• Người mới cứ reply 1, bot tự thêm tên vào danh sách',
   '• Gõ "nước" để xem danh sách nước + mã (N1, N2...) và giá',
   '• Ghi nước: "N1 2" / "revive 2, suối 1" / "+1 N1" (cộng thêm)',
+  '• Nhập hộ: "@An N1 2 @Bình N2 1" (nhiều người một tin)',
   `• Xem quỹ, tiền sân, tiền nước: ${APP_URL}`,
   '• Gõ @bot help để xem lại tin này',
 ].join('\n');

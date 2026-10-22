@@ -89,6 +89,9 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
 6. **Ghi nước qua Zalo**: gõ `@bot nước` để bot liệt kê các loại nước kèm **mã ngắn** (N1, N2...) và giá hiện tại
    (webhook trả lời ngay). Rồi reply/@bot `N1 2`, `N1 2, N2 1`, `nước 2` (khi chỉ có một loại), `revive 2, suối 1`,
    `+1 N1` (cộng thêm), `N1 0` (xoá). Mã ngắn tự gán khi tạo loại nước, hiện trong Cài đặt → Loại nước & giá.
+   Mã/tên không phân biệt hoa thường, có dấu hay không dấu.
+   **Nhập hộ**: `@An N1 2 @Nguyễn Văn Bình N2 1, N1 1` — mỗi người sau dấu @ được ghi riêng, nhiều người trong một tin;
+   phần trước dấu @ đầu tiên (nếu có) là của chính người gửi. Tên khớp dài nhất với danh sách, viết tắt duy nhất cũng được.
    App ghi vào buổi gần nhất người đó tham gia (36 giờ trước → 6 giờ sau giờ chơi), tính lại tiền và bot trả lời xác nhận
    kèm tổng tiền nước. Người chưa có trong danh sách hoặc không tìm thấy buổi thì bot báo để quản lý xử lý.
 

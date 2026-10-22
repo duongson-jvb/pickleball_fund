@@ -244,67 +244,92 @@ class ZaloVoteSync {
     );
   }
 
-  /// Xử lý lệnh ghi nước từ một tin Zalo. Trả về dòng mô tả kết quả (hoặc null).
+  /// Xử lý lệnh ghi nước từ một tin Zalo (cho mình hoặc nhập hộ nhiều người
+  /// bằng @tên). Trả về dòng mô tả kết quả (hoặc null).
   static Future<String?> _handleDrink(TeamStore store, ZaloUpdate u) async {
     final settings = store.settings;
-    final player = matchPlayer(
+    final sender = matchPlayer(
         zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
-    String reply;
-    String? note;
-    if (player == null) {
-      reply = '❓ ${u.fromName}: chưa có tên trong danh sách, báo quản lý thêm trước nhé.';
-      note = '${u.fromName}: chưa có trong danh sách';
-    } else {
-      final cmd = ZaloDrinks.parse(u.text, store.drinkTypes, botName: settings.zaloBotName);
-      final session = ZaloDrinks.pickSession(store.sessions, player.id, u.date);
-      if (!cmd.isValid) {
-        reply = '❓ ${player.name}: ${cmd.error ?? 'chưa hiểu'}. Ví dụ: "nước 2" hoặc "revive 2, suối 1".';
-        note = '${player.name}: lệnh nước không hiểu';
-      } else if (session == null) {
-        reply = '❓ ${player.name}: không tìm thấy buổi chơi gần đây bạn tham gia để ghi nước.';
-        note = '${player.name}: không có buổi để ghi nước';
-      } else {
-        // Người có vote "đi" nhưng chưa trong danh sách chơi (buổi đang vote) → thêm vào.
-        var target = session;
-        if (!target.playerIds.contains(player.id)) {
-          target = target.copyWith(playerIds: [...target.playerIds, player.id]);
-        }
-        // Đóng băng giá nước cho các loại chưa có giá trong buổi.
-        final prices = {...target.drinkPrices};
-        for (final c in cmd.changes) {
-          prices.putIfAbsent(
-              c.drinkTypeId, () => store.drinkTypeById(c.drinkTypeId)?.priceOn(target.date) ?? 0);
-        }
-        final drinks = ZaloDrinks.applyChanges(target.drinks, player.id, cmd.changes);
-        target = target.copyWith(drinks: drinks, drinkPrices: prices);
-        await store.repo.saveAndSettleSession(
-          target,
-          commonFundExcludingThis: store.commonFundExcluding(target.id),
-        );
-        final mine = drinks[player.id] ?? {};
-        var total = 0;
-        final parts = <String>[];
-        mine.forEach((id, q) {
-          final price = prices[id] ?? 0;
-          total += q * price;
-          parts.add('$q ${store.drinkTypeById(id)?.name ?? 'nước'}');
-        });
-        final label = target.title.isEmpty ? fmtDate(target.date) : target.title;
-        reply = parts.isEmpty
-            ? '✅ ${player.name}: đã xoá nước ở "$label".'
-            : '✅ ${player.name} ($label): ${parts.join(', ')} = ${vnd(total)}.';
-        note = '${player.name}: ${parts.isEmpty ? 'xoá nước' : parts.join(', ')}';
+    final assignments = ZaloDrinks.parseMulti(
+        u.text, store.drinkTypes, store.activePlayers, botName: settings.zaloBotName);
+
+    final lines = <String>[];
+    final notes = <String>[];
+    // Gom thay đổi theo buổi để mỗi buổi chỉ lưu + tính tiền một lần.
+    final touched = <String, Session>{};
+
+    for (final a in assignments) {
+      final target = a.isSelf ? sender : a.player;
+      final who = a.isSelf ? (sender?.name ?? u.fromName) : (a.player?.name ?? a.nameText);
+      if (target == null) {
+        lines.add(a.isSelf
+            ? '❓ ${u.fromName}: chưa có tên trong danh sách, báo quản lý thêm trước nhé.'
+            : '❓ Không tìm thấy người chơi "${a.nameText}".');
+        notes.add('$who: không tìm thấy');
+        continue;
       }
+      if (!a.command.isValid) {
+        lines.add('❓ $who: ${a.command.error ?? 'chưa hiểu'}. Ví dụ: "N1 2" hoặc "revive 2, suối 1".');
+        notes.add('$who: lệnh không hiểu');
+        continue;
+      }
+      // Buổi của người được ghi; không có thì dùng buổi của người gửi (nhập hộ).
+      var session = ZaloDrinks.pickSession(store.sessions, target.id, u.date);
+      session ??= sender == null ? null : ZaloDrinks.pickSession(store.sessions, sender.id, u.date);
+      if (session == null) {
+        lines.add('❓ $who: không tìm thấy buổi chơi gần đây để ghi nước.');
+        notes.add('$who: không có buổi');
+        continue;
+      }
+      var s = touched[session.id] ?? session;
+      var addedToSession = false;
+      if (!s.playerIds.contains(target.id)) {
+        s = s.copyWith(playerIds: [...s.playerIds, target.id]);
+        addedToSession = true;
+      }
+      // Đóng băng giá nước cho các loại chưa có giá trong buổi.
+      final prices = {...s.drinkPrices};
+      for (final c in a.command.changes) {
+        prices.putIfAbsent(
+            c.drinkTypeId, () => store.drinkTypeById(c.drinkTypeId)?.priceOn(s.date) ?? 0);
+      }
+      final drinks = ZaloDrinks.applyChanges(s.drinks, target.id, a.command.changes);
+      s = s.copyWith(drinks: drinks, drinkPrices: prices);
+      touched[s.id] = s;
+
+      final mine = drinks[target.id] ?? {};
+      var total = 0;
+      final parts = <String>[];
+      mine.forEach((id, q) {
+        total += q * (prices[id] ?? 0);
+        parts.add('$q ${store.drinkTypeById(id)?.name ?? 'nước'}');
+      });
+      final label = s.title.isEmpty ? fmtDate(s.date) : s.title;
+      lines.add(parts.isEmpty
+          ? '✅ ${target.name}: đã xoá nước ở "$label".'
+          : '✅ ${target.name} ($label): ${parts.join(', ')} = ${vnd(total)}'
+              '${addedToSession ? ' · đã thêm vào danh sách chơi' : ''}.');
+      notes.add('${target.name}: ${parts.isEmpty ? 'xoá nước' : parts.join(', ')}');
     }
+
+    for (final s in touched.values) {
+      await store.repo.saveAndSettleSession(
+        s,
+        commonFundExcludingThis: store.commonFundExcluding(s.id),
+      );
+    }
+
+    if (lines.isEmpty) return null;
     // Trả lời trong chat (nếu gửi được).
     if (settings.hasZaloBot) {
       try {
-        await ZaloBotService.forTeam(settings, store.repo.teamId).sendMessage(u.chatId, reply);
+        await ZaloBotService.forTeam(settings, store.repo.teamId)
+            .sendMessage(u.chatId, lines.join('\n'));
       } catch (_) {
         // Không gửi được thì thôi, dữ liệu đã ghi.
       }
     }
-    return note;
+    return notes.join('; ');
   }
 
   /// Ghi nhớ các chat (nhóm / riêng) bot từng nhận tin để người dùng chọn nhóm.

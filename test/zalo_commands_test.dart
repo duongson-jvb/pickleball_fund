@@ -28,9 +28,9 @@ void main() {
     test('help không bị hiểu thành vote', () {
       expect(ZaloVoteSync.parseVote('@Bot help'), isNull);
     });
-    test('nội dung help ngắn gọn, dưới 2000 ký tự và dưới 8 dòng', () {
+    test('nội dung help ngắn gọn, dưới 2000 ký tự và không quá 10 dòng', () {
       expect(ZaloCommands.helpText.length, lessThan(2000));
-      expect(ZaloCommands.helpText.split('\n').length, lessThanOrEqualTo(8));
+      expect(ZaloCommands.helpText.split('\n').length, lessThanOrEqualTo(10));
       expect(ZaloCommands.helpText, contains(ZaloCommands.appUrl));
     });
   });
