@@ -73,10 +73,12 @@ Bot `Bot PickleBall JVB` trong nhóm. Bot chỉ thấy tin **reply** bot hoặc 
 
 | Gõ trong nhóm | Bot làm gì |
 |---|---|
-| Reply tin vote: `1` / `0` (`đi`, `không`, `ok`, `bận`...) | Ghi vote cho buổi đang mở. Người chưa có tên → tự thêm. |
+| Reply tin vote: `1` / `2` / `0` (`đi`, `không`, `ok`, `bận`...) | Webhook **ghi vote ngay** vào buổi đang mở và **xác nhận tức thì**: "✅ An: đi · đã có 3/8 suất". Không còn chỗ, hết hạn, chưa có buổi, gõ số sai → bot báo rõ. Người chưa có tên → vào hộp thư, app tự thêm rồi bot xác nhận. Chỉ câu **ngắn** (≤ 5 từ) có từ khoá mới tính là vote; câu nói dài như "anh Sơn bảo anh oke rồi em" chuyển sang AI. |
+| `vote`, `danh sách vote` | Các buổi đang mở vote: giờ, sân, hạn, số suất, ai đã vote. Không có thì báo "không có vote nào đang mở". |
 | `help`, `hướng dẫn`, `?` | Hướng dẫn 6 dòng (trả lời tức thì). |
+| Chỉ `@bot` không nội dung | Bot nhắc các lệnh. Mọi tin tag bot đều có phản hồi; AI lỗi cũng trả lời "em chưa hiểu, gõ help". |
 | `nước`, `giá nước` | Danh sách nước kèm mã `N1, N2...` và giá hôm nay (tức thì). |
-| `N1 2` · `revive 2, suối 1` · `+1 N1` · `N1 0` | Ghi/cộng/xoá nước cho mình vào buổi gần nhất mình tham gia; tính lại tiền; bot xác nhận kèm tổng tiền nước. Không phân biệt hoa thường, dấu. |
+| `N1 2` · `revive 2, suối 1` · `+1 N1` · `N1 0` | Bot báo "đã nhận lệnh nước" ngay; app (máy quản trị) ghi vào buổi gần nhất mình tham gia, tính lại tiền, rồi bot xác nhận kèm tổng tiền nước. Không phân biệt hoa thường, dấu. |
 | `@An N1 2 @Bình N2 1` | Nhập hộ nhiều người trong một tin; phần trước @ đầu tiên là của người gửi. Người chưa có trong buổi vẫn được ghi nước (trừ đúng người uống) nhưng **không** tự thêm vào danh sách chơi, bot nhắc quản lý thêm nếu họ có chơi. Thiếu số lượng ("N1 2 N2") thì bot báo lỗi rõ. |
 | `quỹ`, `số dư` | Bảng số dư cả nhóm + quỹ chung; người dưới 10.000đ có ⚠️; kèm thông tin chuyển khoản và **ảnh QR** nếu có người sắp hết (tức thì). |
 | Câu hỏi khác | **AI (Gemini) trả lời** tức thì, biết buổi sắp tới, bảng giá nước, các lệnh; xưng "em"; không bịa số liệu. Hết hạn mức → báo vui vẻ kèm lúc hỏi lại. |

@@ -33,6 +33,14 @@ void main() {
         expect(ZaloCommands.isFund(t, botName: 'Bot PickleBall JVB'), isFalse, reason: t);
       }
     });
+    test('lệnh "vote": xem buổi đang mở, không nhầm với vote "1" hay câu nói', () {
+      for (final t in ['vote', 'Vote?', '@Bot PickleBall JVB vote', 'danh sách vote', 'xem vote']) {
+        expect(ZaloCommands.isVoteList(t, botName: 'Bot PickleBall JVB'), isTrue, reason: t);
+      }
+      for (final t in ['1', 'đi', 'vote giúp em với nhé mọi người', 'nước']) {
+        expect(ZaloCommands.isVoteList(t, botName: 'Bot PickleBall JVB'), isFalse, reason: t);
+      }
+    });
     test('help không bị hiểu thành vote', () {
       expect(ZaloVoteSync.parseVote('@Bot help'), isNull);
     });

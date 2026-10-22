@@ -192,6 +192,7 @@ class ZaloVoteSync {
     final createdNames = <String>[];
     final fullNames = <String>[]; // vote "đi" bị từ chối vì đã đủ người
     final drinkNotes = <String>[]; // kết quả lệnh ghi nước
+    final confirmations = <String, List<String>>{}; // chatId -> các dòng xác nhận vote
     var ignored = 0;
     var lateCount = 0; // tin gửi sau hạn vote
 
@@ -225,6 +226,20 @@ class ZaloVoteSync {
             await ZaloBotService.forTeam(settings, store.repo.teamId)
                 .sendMessage(u.chatId, ShareService.balanceReport(store));
           } catch (_) {}
+        }
+        continue;
+      }
+
+      // "@bot vote" → các buổi đang mở vote (chế độ app tự hỏi Zalo; webhook đã tự trả lời).
+      if (ZaloCommands.isVoteList(u.text, botName: settings.zaloBotName)) {
+        ignored++;
+        if (!settings.zaloWebhookMode && settings.hasZaloBot) {
+          final open = store.sessions.where((s) => s.status == SessionStatus.voting).toList()
+            ..sort((a, b) => a.date.compareTo(b.date));
+          final text = open.isEmpty
+              ? '📭 Hiện không có vote nào đang mở. Quản lý tạo buổi mới trong app là em gửi vote ngay.'
+              : open.take(3).map((s) => ShareService.voteText(store, s)).join('\n\n');
+          await _reply(store, u.chatId, text);
         }
         continue;
       }
@@ -328,6 +343,18 @@ class ZaloVoteSync {
         }
         pending.remove(u.fromId);
         if (!applied.contains(player.name)) applied.add(player.name);
+        // Xác nhận cho người vote (ở chế độ webhook, chỉ người mới được tự thêm
+        // mới tới đây; người đã có trong danh sách được webhook xác nhận ngay).
+        var seatsNow = 0;
+        votes.forEach((pid, v) {
+          if (v) seatsNow += 1 + (companions[pid] ?? 0);
+        });
+        final cap = session.maxPlayers != null ? '/${session.maxPlayers}' : '';
+        final label = session.title.isEmpty ? 'buổi chơi' : '"${session.title}"';
+        confirmations.putIfAbsent(u.chatId, () => []).add(vote
+            ? '✅ ${player.name}${count > 1 ? ' (+${count - 1} đính kèm)' : ''}: đi $label · đã có $seatsNow$cap suất.'
+                '${createdNames.contains(player.name) ? ' Đã thêm vào danh sách người chơi.' : ''}'
+            : '👌 ${player.name}: không đi $label · còn $seatsNow$cap suất.');
         // Ghi nhớ Zalo id để lần sau khớp chính xác.
         if (player.zaloId != u.fromId && u.fromId.isNotEmpty) {
           await store.repo.updatePlayer(player.id, {
@@ -335,7 +362,8 @@ class ZaloVoteSync {
             'zaloName': u.fromName,
           });
         }
-      } else {
+      } else if (vote != null) {
+        // Chỉ xếp vào "chờ gán" khi tin thật sự là vote mà chưa khớp được người.
         pending[u.fromId.isEmpty ? u.messageId : u.fromId] = ZaloPendingVote(
           zaloId: u.fromId,
           name: u.fromName,
@@ -343,6 +371,9 @@ class ZaloVoteSync {
           vote: vote,
           date: u.date,
         );
+      } else {
+        // Câu nói thường ("anh Sơn bảo anh oke rồi em") → không phải vote, bỏ qua.
+        ignored++;
       }
     }
 
@@ -359,6 +390,10 @@ class ZaloVoteSync {
         ...companionUpdates,
         'zaloPending': pending.values.map((e) => e.toMap()).toList(),
       });
+      // Báo lại cho người vote: điểm danh thành công thì không được im lặng.
+      for (final e in confirmations.entries) {
+        await _reply(store, e.key, e.value.join('\n'));
+      }
     }
     return ZaloSyncResult(
       target: session,

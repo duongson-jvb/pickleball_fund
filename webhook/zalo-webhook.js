@@ -105,112 +105,107 @@ export default {
     const chatId = msg?.chat?.id;
     if (!chatId) return json({ ok: true, ignored: true });
 
+    // Nội dung tin (ảnh kèm chú thích thì nằm ở caption).
+    const text = String(msg.text ?? msg.caption ?? '');
+    const chat = String(chatId);
+    const fromName = msg.from?.display_name || '';
+    const fromId = String(msg.from?.id || '');
+
     // Lệnh "@bot help": trả lời hướng dẫn ngay, không ghi vào hộp thư vote.
-    const text = String(msg.text ?? '');
     if (isHelpCommand(text)) {
-      return replyHelp(env, teamId, String(chatId));
-    }
-    // "@bot quỹ" → bảng số dư cả nhóm ngay.
-    if (mayBeFundRequest(text)) {
-      const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotName`);
-      if (isFundRequest(text, team?.fields?.zaloBotName?.stringValue || '')) {
-        return json({ ok: true, fund: await sendFundReport(env, teamId, String(chatId), { weekly: false }) });
-      }
+      return replyHelp(env, teamId, chat);
     }
 
-    // "@bot nước" (không kèm số) → trả danh sách nước kèm mã và giá ngay.
-    // Phải bỏ tên bot (có dấu cách) khỏi tin nên cần đọc zaloBotName từ Firestore.
-    if (mayBeDrinkListRequest(text)) {
-      const r = await replyDrinkList(env, teamId, String(chatId), text);
+    // Đọc một lần thông tin nhóm (token bot, tên bot) cho các bước sau.
+    const teamDoc = await fsGet(env,
+      `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloBotName&mask.fieldPaths=name`);
+    const tf = teamDoc?.fields || {};
+    const token = tf.zaloBotToken?.stringValue || '';
+    const botName = tf.zaloBotName?.stringValue || '';
+
+    // "@bot quỹ" → bảng số dư cả nhóm ngay.
+    if (isFundRequest(text, botName)) {
+      return json({ ok: true, fund: await sendFundReport(env, teamId, chat, { weekly: false }) });
+    }
+    // "@bot nước" (không kèm số) → danh sách nước kèm mã và giá ngay.
+    if (isDrinkListRequest(text, botName)) {
+      const r = await replyDrinkList(env, teamId, chat, text);
       if (r) return r;
     }
+    // "@bot vote" → các buổi đang mở vote (hoặc báo không có).
+    if (isVoteListRequest(text, botName)) {
+      return replyVoteList(env, teamId, chat, token);
+    }
 
-    // ---- Tin vote: kiểm tra trước khi ghi hộp thư, để không ai bị im lặng bỏ qua.
-    const teamForVote = await fsGet(env,
-      `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotName`);
-    const voteBotName = teamForVote?.fields?.zaloBotName?.stringValue || '';
-    const voteShape = readVoteShape(text, voteBotName);
+    const cleaned = cleanForCommand(text, botName);
+    // Chỉ @bot mà không nói gì → nhắc cách dùng, không im lặng.
+    if (!cleaned) {
+      return replyText(env, teamId, chat, EMPTY_MENTION_TEXT, token);
+    }
 
-    // Lệnh ghi nước cũng chứa từ khoá vote ("+1 N1", "N1 0") → không phải vote,
-    // để nguyên cho app xử lý.
-    const cleanedForDrink = cleanForCommand(text, voteBotName);
-    const isDrinkCommand = /\d/.test(cleanedForDrink) &&
-      hasDrinkMarker(cleanedForDrink, await drinkAliases(env, teamId));
+    const voteShape = readVoteShape(text, botName);
+    // Lệnh ghi nước cũng chứa từ khoá vote ("+1 N1", "N1 0") → không phải vote.
+    const isDrinkCommand = /\d/.test(cleaned) && hasDrinkMarker(cleaned, await drinkAliases(env, teamId));
 
     // Gõ số sai ("10", "01", "0.1", "1,2,3"...) → báo lại ngay, không tính vote.
     if (!isDrinkCommand && voteShape.error) {
       console.log(`vote sai cu phap: "${text.slice(0, 40)}"`);
-      return replyText(env, teamId, String(chatId), voteShape.error);
-    }
-
-    // Vote khi chưa có buổi nào đang mở vote (hoặc đã hết hạn) → báo lại.
-    if (!isDrinkCommand && voteShape.definite) {
-      const open = await openVoteSession(env, teamId);
-      if (!open) {
-        return replyText(env, teamId, String(chatId), NO_OPEN_VOTE_TEXT);
-      }
-      if (open.expired) {
-        return replyText(env, teamId, String(chatId),
-          `⏰ ${open.title ? `Buổi "${open.title}"` : 'Buổi chơi'} đã hết hạn vote lúc ` +
-          `${fmtDateTime(open.deadline)}, vote này không được tính. Báo quản lý nếu cần nhé!`);
-      }
+      return replyText(env, teamId, chat, voteShape.error, token);
     }
 
     const messageId = String(msg.message_id || crypto.randomUUID());
     const dateMs = typeof msg.date === 'number'
       ? (msg.date > 1e11 ? msg.date : msg.date * 1000)
       : Date.now();
-
-    // Ảnh kèm chú thích: nội dung nằm ở caption chứ không phải text, mà lệnh ghi
-    // nước vẫn có thể nằm trong đó - phải xét đúng chuỗi sẽ lưu vào hộp thư.
-    const inboxText = String(msg.text ?? msg.caption ?? '');
-
-    const fields = {
+    const inboxFields = {
       eventName: s(result.event_name ?? ''),
       messageId: s(messageId),
-      fromId: s(msg.from?.id ?? ''),
-      fromName: s(msg.from?.display_name ?? ''),
-      chatId: s(chatId),
+      fromId: s(fromId),
+      fromName: s(fromName),
+      chatId: s(chat),
       chatType: s(msg.chat?.chat_type ?? 'PRIVATE'),
-      text: s(inboxText),
+      text: s(text),
       date: { timestampValue: new Date(dateMs).toISOString() },
       receivedAt: { timestampValue: new Date().toISOString() },
     };
 
-    // Ghi hộp thư cho tin CÓ THỂ liên quan tới app: vote (kể cả câu dài, để quản
-    // lý quyết định ở mục "chưa khớp") và tin có chữ số (lệnh nước). Chuyện phiếm
-    // thuần tuý thì không ghi, tránh làm rác mục "chưa khớp".
-    const aiEnabled = !!(env.GEMINI_API_KEY || env.OPENAI_API_KEY);
-    const saveToInbox = !aiEnabled || voteShape.maybe || /\d/.test(inboxText);
-
-    if (saveToInbox) {
-      const docPath =
-        `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents` +
-        `/teams/${encodeURIComponent(teamId)}/zaloInbox/${encodeURIComponent(messageId)}`;
-      const fsUrl = `https://firestore.googleapis.com/v1/${docPath}?key=${env.FIREBASE_API_KEY}`;
-
-      const res = await fetch(fsUrl, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields }),
-      });
-
-      if (!res.ok) {
-        const err = await res.text();
-        console.log('Firestore error', res.status, err);
-        // Vẫn trả 200 để Zalo không gửi lại liên tục; lỗi xem trong log Worker.
-        return json({ ok: false, firestore: res.status, error: err.slice(0, 500) });
-      }
+    // ---- Lệnh ghi nước: app (máy quản trị) mới ghi được → vào hộp thư + báo đã nhận.
+    if (isDrinkCommand) {
+      const saved = await saveInbox(env, teamId, messageId, inboxFields);
+      if (!saved.ok) return saved.response;
+      return replyText(env, teamId, chat,
+        `📝 Em đã nhận lệnh nước của ${fromName || 'bạn'}, sẽ ghi vào sổ và báo lại ngay khi quản lý mở app.`, token);
     }
 
-    // Tin không chắc chắn là vote → để AI trả lời. Phải ghi hộp thư TRƯỚC rồi mới
-    // gọi AI: trước đây AI trả lời xong là thoát luôn, nên vote dài hơn ba từ
-    // ("cho em đi với") không bao giờ tới được app - mất vote mà không ai biết.
-    if (aiEnabled && text.trim() && !voteShape.definite && !isDrinkCommand) {
-      const r = await maybeChatReply(env, teamId, String(chatId), text, msg.from?.display_name || '');
+    // ---- Vote chắc chắn ("1", "2", "0", "đi", "không đi"...): ghi THẲNG vào buổi và xác nhận.
+    if (voteShape.definite) {
+      const open = await openVoteSession(env, teamId);
+      if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token);
+      if (open.expired) {
+        return replyText(env, teamId, chat,
+          `⏰ ${open.title ? `Buổi "${open.title}"` : 'Buổi chơi'} đã hết hạn vote lúc ` +
+          `${fmtDateTime(open.deadline)}, vote này không được tính. Báo quản lý nếu cần nhé!`, token);
+      }
+      const players = await loadPlayers(env, teamId);
+      const player = matchPlayerJs(players, fromId, fromName);
+      if (!player) {
+        // Người chưa có trong danh sách: app sẽ tự thêm rồi ghi vote → báo đã nhận.
+        const saved = await saveInbox(env, teamId, messageId, inboxFields);
+        if (!saved.ok) return saved.response;
+        return replyText(env, teamId, chat,
+          `📝 Em đã nhận vote của ${fromName || 'bạn'}. Tên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`, token);
+      }
+      const r = await recordVote(env, teamId, open, player, voteShape, dateMs, players);
+      console.log(`vote → ${player.name}: ${r.status}`);
+      return replyText(env, teamId, chat, r.text, token);
+    }
+
+    // ---- Còn lại là câu hỏi / trò chuyện → AI trả lời (không ghi hộp thư). AI lỗi vẫn trả lời.
+    if (env.GEMINI_API_KEY || env.OPENAI_API_KEY) {
+      const r = await maybeChatReply(env, teamId, chat, text, fromName);
       if (r) return r;
     }
-    return json({ ok: true, saved: saveToInbox ? messageId : null });
+    return replyText(env, teamId, chat, FALLBACK_TEXT, token);
   },
 };
 
@@ -244,7 +239,7 @@ const APP_URL = 'https://duongson-jvb.github.io/pickleball_fund/';
 
 const HELP_TEXT = [
   '🏓 Bot Quỹ Pickleball',
-  '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4',
+  '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4 · gõ "vote" xem buổi đang mở',
   '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
   '• Quỹ: "quỹ" xem số dư cả nhóm',
   '• Hỏi gì cứ @bot, em trả lời',
@@ -368,8 +363,12 @@ function readVoteShape(text, botName) {
   let t = normalizeVi(text);
   if (botName) t = t.split(normalizeVi(botName)).join(' ');
   t = t.replace(/@/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!t) return { definite: false, maybe: false, error: null };
+  if (!t) return { definite: false, maybe: false, error: null, original: text, botName };
+  const shape = readVoteShapeInner(t, text);
+  return { ...shape, original: text, botName };
+}
 
+function readVoteShapeInner(t, text) {
   if (/^[+\-\d.,\s]+$/.test(t)) {
     const cleaned = t.replace(/\.+$/, '').trim();
     if (cleaned === '-1') return { definite: true, maybe: true, error: null };
@@ -405,31 +404,220 @@ function readVoteShape(text, botName) {
   return { definite, maybe: true, error: null };
 }
 
+/** Đọc một buổi chơi từ document Firestore. */
+function parseSessionDoc(d) {
+  const f = d.fields || {};
+  const date = Date.parse(f.date?.timestampValue || 0) || 0;
+  const deadline = f.voteDeadline?.timestampValue ? Date.parse(f.voteDeadline.timestampValue) : date;
+  const votes = {};
+  for (const [k, v] of Object.entries(f.votes?.mapValue?.fields || {})) votes[k] = v.booleanValue === true;
+  const companions = {};
+  for (const [k, v] of Object.entries(f.companions?.mapValue?.fields || {})) {
+    const n = parseInt(v.integerValue || '0', 10) || 0;
+    if (n > 0) companions[k] = n;
+  }
+  return {
+    id: String(d.name || '').split('/').pop(),
+    title: f.title?.stringValue || '',
+    location: f.location?.stringValue || '',
+    status: f.status?.stringValue || '',
+    date, deadline,
+    expired: Date.now() > deadline,
+    maxPlayers: f.maxPlayers?.integerValue ? parseInt(f.maxPlayers.integerValue, 10) : null,
+    votes, companions,
+    playerIds: (f.playerIds?.arrayValue?.values || []).map((v) => v.stringValue),
+  };
+}
+
+function seatsTaken(sess) {
+  let n = 0;
+  for (const [pid, v] of Object.entries(sess.votes)) if (v) n += 1 + (sess.companions[pid] || 0);
+  return n;
+}
+
+/** Các buổi đang ở trạng thái vote, buổi còn hạn xếp trước, rồi theo ngày. */
+async function votingSessions(env, teamId) {
+  const docs = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50`))?.documents || [];
+  return docs.map(parseSessionDoc).filter((x) => x.status === 'voting')
+    .sort((a, b) => (a.expired === b.expired ? a.date - b.date : (a.expired ? 1 : -1)));
+}
+
 /** Buổi đang mở vote gần nhất, hoặc null. Trả cả buổi đã quá hạn để báo cho đúng. */
 async function openVoteSession(env, teamId) {
-  const docs = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50`))?.documents || [];
-  const now = Date.now();
-  let best = null;
-  for (const d of docs) {
-    const f = d.fields || {};
-    if ((f.status?.stringValue || '') !== 'voting') continue;
-    const date = Date.parse(f.date?.timestampValue || 0) || 0;
-    const deadline = f.voteDeadline?.timestampValue ? Date.parse(f.voteDeadline.timestampValue) : date;
-    const item = { title: f.title?.stringValue || '', deadline, expired: now > deadline };
-    // Ưu tiên buổi còn hạn; không có thì lấy buổi quá hạn gần nhất để báo.
-    if (!item.expired) {
-      if (!best || best.expired || item.deadline < best.deadline) best = item;
-    } else if (!best) {
-      best = item;
+  const list = await votingSessions(env, teamId);
+  return list.length ? list[0] : null;
+}
+
+// ----------------------------------------------------- ghi vote trực tiếp
+const EMPTY_MENTION_TEXT = '👋 Em đây! Gõ "help" để xem cách dùng, "vote" xem buổi đang mở, "nước" xem giá nước, "quỹ" xem số dư.';
+const FALLBACK_TEXT = '😅 Em chưa hiểu ý anh/chị. Gõ "help" để xem các lệnh, hoặc hỏi lại em bằng câu khác nhé.';
+
+/** Token đăng nhập (ẩn danh) để webhook ghi vote vào Firestore theo rules. */
+async function getBotIdToken(env) {
+  if (env.BOT_REFRESH_TOKEN) {
+    const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${env.FIREBASE_API_KEY}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: env.BOT_REFRESH_TOKEN }),
+    });
+    const data = await res.json();
+    if (res.ok && data.id_token) return data.id_token;
+    console.log('refresh token failed', res.status, JSON.stringify(data).slice(0, 200));
+  }
+  // Dự phòng: tạo phiên ẩn danh mới.
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${env.FIREBASE_API_KEY}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }),
+  });
+  const data = await res.json();
+  if (res.ok && data.idToken) {
+    console.log('anonymous signUp used; set BOT_REFRESH_TOKEN to', data.refreshToken ? 'the printed refresh token' : '?');
+    return data.idToken;
+  }
+  return '';
+}
+
+async function loadPlayers(env, teamId) {
+  const docs = await fsList(env, `teams/${encodeURIComponent(teamId)}/players`);
+  return docs.map((d) => ({
+    id: String(d.name || '').split('/').pop(),
+    name: d.fields?.name?.stringValue || '',
+    zaloId: d.fields?.zaloId?.stringValue || '',
+    active: d.fields?.active?.booleanValue !== false,
+  })).filter((p) => p.active);
+}
+
+/** Khớp người gửi: Zalo id đã lưu → tên chính xác → trọn cụm từ (duy nhất). */
+function matchPlayerJs(players, fromId, fromName) {
+  if (fromId) {
+    const byId = players.find((p) => p.zaloId === fromId);
+    if (byId) return byId;
+  }
+  const n = normalizeVi(fromName);
+  if (!n) return null;
+  const exact = players.filter((p) => normalizeVi(p.name) === n);
+  if (exact.length === 1) return exact[0];
+  const whole = (hay, needle) => new RegExp(`(^|\\s)${escapeRe(needle)}(\\s|$)`).test(hay);
+  const partial = players.filter((p) => {
+    const pn = normalizeVi(p.name);
+    return pn && (whole(n, pn) || whole(pn, n));
+  });
+  return partial.length === 1 ? partial[0] : null;
+}
+
+/** Giá trị vote từ tin đã được readVoteShape coi là chắc chắn: { vote, seats }. */
+function readVoteValue(text, botName) {
+  let t = normalizeVi(text);
+  if (botName) t = t.split(normalizeVi(botName)).join(' ');
+  t = t.replace(/@/g, ' ').replace(/[.,!?()\[\]:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (t === '-1') return { vote: false, seats: 0 };
+  const num = /^\+?(\d+)(\s+(nguoi|ng|suat|slot))?$/.exec(t);
+  if (num) {
+    const n = parseInt(num[1], 10);
+    return n > 0 ? { vote: true, seats: Math.min(n, MAX_VOTE_SEATS) } : { vote: false, seats: 0 };
+  }
+  if (VOTE_NO_RE.test(t)) return { vote: false, seats: 0 };
+  const inline = /(^|\s)\+?(\d+)(\s|$)/.exec(t);
+  const seats = inline ? Math.max(1, Math.min(parseInt(inline[2], 10), MAX_VOTE_SEATS)) : 1;
+  return { vote: true, seats };
+}
+
+/** Ghi vote vào buổi bằng Firestore REST (token ẩn danh, rules cho phép votes/voteTimes/companions). */
+async function recordVote(env, teamId, sess, player, voteShape, dateMs, players) {
+  const { vote, seats } = readVoteValue(voteShape.original || '', voteShape.botName || '');
+  const pid = player.id;
+  const label = sess.title ? `"${sess.title}"` : 'buổi chơi';
+  // Kiểm tra chỗ (tính cả đính kèm).
+  if (vote && sess.maxPlayers != null) {
+    const taken = seatsTaken(sess);
+    const mine = sess.votes[pid] ? 1 + (sess.companions[pid] || 0) : 0;
+    if (taken - mine + seats > sess.maxPlayers) {
+      const left = Math.max(0, sess.maxPlayers - (taken - mine));
+      return { status: 'full', text: `😢 ${player.name}: ${label} chỉ còn ${left} chỗ (giới hạn ${sess.maxPlayers}), em chưa ghi được ${seats} suất. ` +
+        (left > 0 ? `Reply "${left}" để giữ ${left} chỗ nhé.` : 'Báo quản lý nếu cần thêm chỗ nhé.') };
     }
   }
-  return best;
+  const idToken = await getBotIdToken(env);
+  if (!idToken) return { status: 'no-auth', text: `📝 Em đã nhận vote của ${player.name}, sẽ cập nhật khi quản lý mở app.` };
+
+  const fields = {
+    votes: { mapValue: { fields: { [pid]: { booleanValue: vote } } } },
+    voteTimes: { mapValue: { fields: { [pid]: { timestampValue: new Date(dateMs).toISOString() } } } },
+  };
+  if (vote && seats > 1) fields.companions = { mapValue: { fields: { [pid]: { integerValue: String(seats - 1) } } } };
+  const mask = [`votes.${pid}`, `voteTimes.${pid}`, `companions.${pid}`]
+    .map((m) => `updateMask.fieldPaths=${encodeURIComponent(m)}`).join('&');
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents` +
+    `/teams/${encodeURIComponent(teamId)}/sessions/${encodeURIComponent(sess.id)}?${mask}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) {
+    console.log('recordVote failed', res.status, (await res.text()).slice(0, 300));
+    return { status: `error-${res.status}`, text: `📝 Em đã nhận vote của ${player.name} nhưng chưa ghi được ngay, quản lý mở app là em cập nhật.` };
+  }
+  // Tính lại số chỗ sau khi ghi.
+  const votes = { ...sess.votes, [pid]: vote };
+  const companions = { ...sess.companions };
+  if (vote && seats > 1) companions[pid] = seats - 1; else delete companions[pid];
+  const after = seatsTaken({ votes, companions });
+  const cap = sess.maxPlayers != null ? `/${sess.maxPlayers}` : '';
+  const who = `${player.name}${vote && seats > 1 ? ` (+${seats - 1} đính kèm)` : ''}`;
+  const text = vote
+    ? `✅ ${who}: đi ${label} · đã có ${after}${cap} suất. Đổi ý thì reply lại nhé!`
+    : `👌 ${player.name}: không đi ${label} · còn ${after}${cap} suất.`;
+  return { status: 'recorded', text };
+}
+
+// --------------------------------------------------------- "@bot vote"
+function isVoteListRequest(text, botName) {
+  const t = cleanForCommand(text, botName);
+  return /^(vote|ds vote|danh sach vote|list vote|vote nao|lich vote|buoi vote|dang vote|vote dang mo|xem vote|vote di)$/.test(t);
+}
+
+async function replyVoteList(env, teamId, chatId, token) {
+  const list = await votingSessions(env, teamId);
+  if (!list.length) {
+    return replyText(env, teamId, chatId,
+      '📭 Hiện không có vote nào đang mở. Quản lý tạo buổi mới trong app là em gửi vote ngay.', token);
+  }
+  const players = await loadPlayers(env, teamId);
+  const nameOf = (id) => players.find((p) => p.id === id)?.name || 'Ẩn danh';
+  const lines = ['📊 VOTE ĐANG MỞ'];
+  for (const x of list.slice(0, 3)) {
+    const yes = Object.entries(x.votes).filter(([, v]) => v).map(([pid]) =>
+      `${nameOf(pid)}${x.companions[pid] ? ` (+${x.companions[pid]})` : ''}`);
+    lines.push(`🏓 ${x.title || 'Buổi chơi'} · ${fmtDateTime(x.date)}${x.location ? ` · ${x.location}` : ''}`);
+    lines.push(`   ${x.expired ? '⏰ Đã hết hạn vote, chờ chốt' : `⏰ Hạn vote ${fmtDateTime(x.deadline)}`}` +
+      ` · ${seatsTaken(x)}${x.maxPlayers != null ? '/' + x.maxPlayers : ''} suất`);
+    lines.push(`   ${yes.length ? '✅ ' + yes.join(', ') : 'Chưa ai vote'}`);
+  }
+  if (list.some((x) => !x.expired)) lines.push('👉 Reply 1 = đi, 2 = đi 2 người, 0 = không.');
+  return replyText(env, teamId, chatId, lines.join('\n'), token);
+}
+
+/** Ghi tin vào hộp thư cho app xử lý. */
+async function saveInbox(env, teamId, messageId, fields) {
+  const docPath = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents` +
+    `/teams/${encodeURIComponent(teamId)}/zaloInbox/${encodeURIComponent(messageId)}`;
+  const res = await fetch(`https://firestore.googleapis.com/v1/${docPath}?key=${env.FIREBASE_API_KEY}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    console.log('Firestore error', res.status, err);
+    return { ok: false, response: json({ ok: false, firestore: res.status, error: err.slice(0, 500) }) };
+  }
+  return { ok: true };
 }
 
 /** Gửi một tin trả lời vào chat (đọc token của nhóm từ Firestore). */
-async function replyText(env, teamId, chatId, text) {
-  const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotToken`);
-  const token = team?.fields?.zaloBotToken?.stringValue || '';
+async function replyText(env, teamId, chatId, text, knownToken) {
+  let token = knownToken || '';
+  if (!token) {
+    const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotToken`);
+    token = team?.fields?.zaloBotToken?.stringValue || '';
+  }
   if (!token) return json({ ok: true, reply: 'no-token' });
   const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
     method: 'POST',
@@ -609,7 +797,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
     // Hết hạn mức miễn phí → báo vui vẻ, kèm lúc có thể hỏi lại.
     answer = `😅 Em bị hỏi hơi nhiều, hết lượt rồi. ${llm.quota} Trong lúc chờ, vote, ghi nước, "nước", "quỹ", "help" vẫn chạy bình thường nhé!`;
   }
-  if (!answer) return null; // lỗi → để tin đi tiếp vào hộp thư như cũ
+  if (!answer) answer = FALLBACK_TEXT; // AI lỗi vẫn phải trả lời người hỏi
 
   const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
     method: 'POST',

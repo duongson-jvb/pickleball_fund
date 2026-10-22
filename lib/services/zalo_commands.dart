@@ -9,7 +9,7 @@ class ZaloCommands {
   static const appUrl = 'https://duongson-jvb.github.io/pickleball_fund/';
 
   static const helpText = '🏓 Bot Quỹ Pickleball\n'
-      '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4\n'
+      '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4 · gõ "vote" xem buổi đang mở\n'
       '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ\n'
       '• Quỹ: "quỹ" xem số dư cả nhóm\n'
       '• Hỏi gì cứ @bot, em trả lời\n'
@@ -38,6 +38,16 @@ class ZaloCommands {
     var t = text;
     if (botName.isNotEmpty) t = normalizeVi(t).replaceAll(normalizeVi(botName), ' ');
     return _fundPattern.hasMatch(_clean(t));
+  }
+
+  static final _voteListPattern = RegExp(
+      r'^(vote|ds vote|danh sach vote|list vote|vote nao|lich vote|buoi vote|dang vote|vote dang mo|xem vote|vote di)$');
+
+  /// "@bot vote" → xem các buổi đang mở vote.
+  static bool isVoteList(String text, {String botName = ''}) {
+    var t = text;
+    if (botName.isNotEmpty) t = normalizeVi(t).replaceAll(normalizeVi(botName), ' ');
+    return _voteListPattern.hasMatch(_clean(t));
   }
 
   /// Có phải là lệnh (không nên tính thành vote / tin chờ) không.
