@@ -9,12 +9,16 @@ class ZaloSyncResult {
   final Session? target;
   final List<String> appliedNames; // người đã cập nhật vote
   final List<String> createdNames; // người chơi vừa tự tạo từ Zalo
+  final List<String> fullNames; // vote "đi" bị từ chối vì đã đủ người
+  final int lateCount; // tin gửi sau hạn vote
   final int pendingCount; // tin chưa khớp được tên
   final int ignoredCount; // tin không thuộc nhóm / gửi trước khi tạo buổi / không phải vote
   const ZaloSyncResult({
     required this.target,
     this.appliedNames = const [],
     this.createdNames = const [],
+    this.fullNames = const [],
+    this.lateCount = 0,
     this.pendingCount = 0,
     this.ignoredCount = 0,
   });
@@ -69,7 +73,12 @@ class ZaloVoteSync {
   /// Chọn buổi để nhận vote: buổi đang vote gần nhất trong tương lai,
   /// nếu không có thì buổi đang vote mới nhất.
   static Session? pickTarget(List<Session> sessions) {
-    final voting = sessions.where((s) => s.status == SessionStatus.voting).toList();
+    // Ưu tiên buổi còn hạn vote; buổi đã quá hạn vẫn được chọn để tin
+    // trễ hạn được ghi nhận là "trễ" (bỏ qua) thay vì rơi vào buổi khác.
+    var voting = sessions.where((s) => s.isVoteOpen).toList();
+    if (voting.isEmpty) {
+      voting = sessions.where((s) => s.status == SessionStatus.voting).toList();
+    }
     if (voting.isEmpty) return null;
     final now = DateTime.now().subtract(const Duration(hours: 6));
     final upcoming = voting.where((s) => s.date.isAfter(now)).toList()
@@ -101,7 +110,9 @@ class ZaloVoteSync {
     final applied = <String>[];
     final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
     final createdNames = <String>[];
+    final fullNames = <String>[]; // vote "đi" bị từ chối vì đã đủ người
     var ignored = 0;
+    var lateCount = 0; // tin gửi sau hạn vote
 
     // Sắp xếp theo thời gian để tin sau ghi đè tin trước.
     final sorted = [...updates]..sort((a, b) => a.date.compareTo(b.date));
@@ -124,12 +135,27 @@ class ZaloVoteSync {
         ignored++;
         continue;
       }
+      // Quá hạn vote → bỏ qua.
+      if (u.date.isAfter(session.effectiveVoteDeadline)) {
+        ignored++;
+        lateCount++;
+        continue;
+      }
       final vote = parseVote(u.text, botName: settings.zaloBotName);
       var player = matchPlayer(
           zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
       // Người vừa được tự tạo trong cùng đợt (stream chưa kịp cập nhật).
       if (player == null && u.fromId.isNotEmpty && created.containsKey(u.fromId)) {
         player = created[u.fromId];
+      }
+
+      // Đã đủ số người: không nhận thêm vote "đi" (người đã "đi" vẫn được đổi ý).
+      final yesCount = votes.values.where((v) => v).length;
+      final alreadyYes = player != null && votes[player.id] == true;
+      if (vote == true && session.maxPlayers != null && yesCount >= session.maxPlayers! && !alreadyYes) {
+        fullNames.add(player?.name ?? u.fromName);
+        ignored++;
+        continue;
       }
 
       // Người reply vote rõ nghĩa nhưng chưa có trong danh sách → tự thêm người chơi.
@@ -178,6 +204,8 @@ class ZaloVoteSync {
       target: session,
       appliedNames: applied,
       createdNames: createdNames,
+      fullNames: fullNames,
+      lateCount: lateCount,
       pendingCount: pending.length,
       ignoredCount: ignored,
     );

@@ -138,11 +138,15 @@ class ShareService {
   static String voteText(TeamStore store, Session s) {
     final sb = StringBuffer('📊 VOTE ĐẶT SÂN – ${fmtWeekday(s.date)}\n');
     if (s.title.isNotEmpty) sb.writeln('🏓 ${s.title}');
+    sb.writeln('🕕 ${fmtDateTime(s.date)}');
     if (s.location.isNotEmpty) sb.writeln('📍 ${s.location}');
-    sb.writeln('👉 Ai đi thì vote nhé! Chốt danh sách trước giờ đặt sân.');
+    if (s.createdByName.isNotEmpty) sb.writeln('👤 Người tạo: ${s.createdByName}');
+    sb.writeln('⏰ Hạn vote: ${fmtDateTime(s.effectiveVoteDeadline)}');
+    if (s.maxPlayers != null) sb.writeln('👥 Giới hạn: ${s.maxPlayers} người');
+    sb.writeln('👉 Ai đi thì vote nhé! Hết hạn tự chốt danh sách.');
     final yes = s.votedYes;
     if (yes.isNotEmpty) {
-      sb.writeln('\nĐã vote đi (${yes.length}):');
+      sb.writeln('\nĐã vote đi (${yes.length}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''}):');
       for (final pid in yes) {
         sb.writeln('✅ ${store.playerName(pid)}');
       }

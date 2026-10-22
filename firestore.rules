@@ -38,10 +38,16 @@ service cloud.firestore {
         allow read: if validTeam(teamId);
         allow create, delete: if isAdmin(teamId);
         // Quản trị sửa tất cả; người thường (đã đăng nhập ẩn danh) chỉ được
-        // đổi trường votes của buổi đang mở vote.
+        // đổi trường votes của buổi đang mở vote và còn trong hạn vote
+        // (hạn = voteDeadline nếu có, không thì = giờ bắt đầu chơi `date`).
         allow update: if isAdmin(teamId) || (
           request.auth != null
           && resource.data.status == 'voting'
+          && request.time < (
+            ('voteDeadline' in resource.data && resource.data.voteDeadline != null)
+              ? resource.data.voteDeadline
+              : resource.data.date
+          )
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes'])
         );
       }

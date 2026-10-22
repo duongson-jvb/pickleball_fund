@@ -62,8 +62,10 @@ class _SessionTile extends StatelessWidget {
           fmtWeekday(s.date),
           if (s.location.isNotEmpty) s.location,
           voting
-              ? 'Đang vote: ${s.votedYes.length} người đi'
+              ? 'Đang vote: ${s.votedYes.length}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} người đi'
+                  '${s.voteExpired ? ' · hết hạn' : ' · hạn ${fmtDateTime(s.effectiveVoteDeadline)}'}'
               : '${s.playerIds.length} người${s.guestCount > 0 ? ' + ${s.guestCount} khách' : ''}',
+          if (s.createdByName.isNotEmpty) 'Tạo bởi ${s.createdByName}',
           if (s.courtFee > 0) 'Sân ${vnd(s.courtFee)}',
           if (st.totalDrinks > 0) 'Nước ${vnd(st.totalDrinks)}',
         ].join(' · ')),

@@ -394,7 +394,19 @@ class Session {
   final SessionSettlement settlement;
   final String zaloVoteMessageId; // id tin vote bot đã gửi lên nhóm
   final List<ZaloPendingVote> zaloPending; // vote Zalo chưa khớp tên
+  final String createdByName; // người tạo buổi (bắt buộc)
+  final String createdById; // id người chơi nếu khớp
+  final DateTime? voteDeadline; // hạn vote (mặc định = giờ bắt đầu chơi)
+  final int? maxPlayers; // giới hạn số người chơi (null = không giới hạn)
   final DateTime createdAt;
+
+  /// Hạn vote hiệu lực: nếu không đặt thì bằng giờ bắt đầu chơi.
+  DateTime get effectiveVoteDeadline => voteDeadline ?? date;
+  bool get voteExpired => DateTime.now().isAfter(effectiveVoteDeadline);
+  bool get isVoteOpen => status == SessionStatus.voting && !voteExpired;
+
+  /// Đã đủ số người (theo vote "đi") chưa.
+  bool get isFull => maxPlayers != null && votedYes.length >= maxPlayers!;
 
   const Session({
     required this.id,
@@ -413,6 +425,10 @@ class Session {
     this.settlement = const SessionSettlement(),
     this.zaloVoteMessageId = '',
     this.zaloPending = const [],
+    this.createdByName = '',
+    this.createdById = '',
+    this.voteDeadline,
+    this.maxPlayers,
     required this.createdAt,
   });
 
@@ -453,6 +469,10 @@ class Session {
       zaloPending: ((d['zaloPending'] as List?) ?? [])
           .map((e) => ZaloPendingVote.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList(),
+      createdByName: (d['createdByName'] as String?) ?? '',
+      createdById: (d['createdById'] as String?) ?? '',
+      voteDeadline: d['voteDeadline'] == null ? null : _toDate(d['voteDeadline']),
+      maxPlayers: d['maxPlayers'] == null ? null : _toInt(d['maxPlayers']),
       createdAt: _toDate(d['createdAt']),
     );
   }
@@ -473,6 +493,10 @@ class Session {
         'settlement': settlement.toMap(),
         'zaloVoteMessageId': zaloVoteMessageId,
         'zaloPending': zaloPending.map((e) => e.toMap()).toList(),
+        'createdByName': createdByName,
+        'createdById': createdById,
+        'voteDeadline': voteDeadline == null ? null : Timestamp.fromDate(voteDeadline!),
+        'maxPlayers': maxPlayers,
         'createdAt': Timestamp.fromDate(createdAt),
       };
 
@@ -493,6 +517,12 @@ class Session {
     SessionSettlement? settlement,
     String? zaloVoteMessageId,
     List<ZaloPendingVote>? zaloPending,
+    String? createdByName,
+    String? createdById,
+    DateTime? voteDeadline,
+    bool clearVoteDeadline = false,
+    int? maxPlayers,
+    bool clearMaxPlayers = false,
   }) =>
       Session(
         id: id,
@@ -512,6 +542,10 @@ class Session {
         settlement: settlement ?? this.settlement,
         zaloVoteMessageId: zaloVoteMessageId ?? this.zaloVoteMessageId,
         zaloPending: zaloPending ?? this.zaloPending,
+        createdByName: createdByName ?? this.createdByName,
+        createdById: createdById ?? this.createdById,
+        voteDeadline: clearVoteDeadline ? null : (voteDeadline ?? this.voteDeadline),
+        maxPlayers: clearMaxPlayers ? null : (maxPlayers ?? this.maxPlayers),
         createdAt: createdAt,
       );
 }
