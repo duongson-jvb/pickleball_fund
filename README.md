@@ -9,6 +9,10 @@ Chạy được trên iOS, Android và Web (bản web được deploy tự độ
 - **Nộp quỹ**: nộp cho một người, hoặc nộp một khoản cho tất cả (tự chia đều theo đầu người).
 - **Quỹ chung**: nộp tiền vào quỹ chung; quỹ chung được ưu tiên trả tiền sân và các chi phí tính cho tất cả mọi người.
 - **Buổi chơi**
+  - Khi tạo: **người tạo** (bắt buộc), **hạn vote** (mặc định = giờ bắt đầu chơi, không muộn hơn giờ chơi,
+    cách lúc tạo ít nhất 30 phút), **giới hạn số người** (trống = không giới hạn).
+    Hết hạn vote → máy quản trị tự chốt danh sách (cắt theo giới hạn). Đủ người → không nhận thêm vote "đi",
+    người đã "đi" vẫn đổi ý được. Vote sau hạn bị bỏ qua (cả trong app lẫn từ Zalo; rules cũng chặn).
   - Vote người chơi trong app, tạo nội dung vote gửi lên Zalo, dán kết quả vote từ Zalo để app tự khớp tên.
   - Chốt danh sách từ vote, vẫn sửa được người chơi thực tế (thêm người không vote, thêm khách) – tiền tự tính lại.
   - Nhập tiền sân: trừ quỹ chung trước, hết quỹ chung thì chia đều phần thiếu cho người chơi trong buổi.

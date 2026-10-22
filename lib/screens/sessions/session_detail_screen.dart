@@ -237,6 +237,8 @@ class _VoteTabState extends State<_VoteTab> {
     final parts = <String>[];
     if (r.appliedNames.isNotEmpty) parts.add('Đã nhận vote: ${r.appliedNames.join(', ')}');
     if (r.createdNames.isNotEmpty) parts.add('Tự thêm người chơi: ${r.createdNames.join(', ')}');
+    if (r.fullNames.isNotEmpty) parts.add('Đủ người, không nhận: ${r.fullNames.join(', ')}');
+    if (r.lateCount > 0) parts.add('${r.lateCount} tin sau hạn vote bị bỏ qua');
     if (r.pendingCount > 0) parts.add('${r.pendingCount} tin chưa khớp tên');
     if (parts.isNotEmpty) {
       setState(() => _botStatus = '${parts.join(' · ')} (${TimeOfDay.now().format(context)})');
@@ -389,9 +391,12 @@ class _VoteTabState extends State<_VoteTab> {
     );
     if (!ok) return;
     await onMutate((l) {
-      final playerIds = [...l.playerIds];
+      var playerIds = [...l.playerIds];
       for (final id in l.votedYes) {
         if (!playerIds.contains(id)) playerIds.add(id);
+      }
+      if (l.maxPlayers != null && playerIds.length > l.maxPlayers!) {
+        playerIds = playerIds.sublist(0, l.maxPlayers!);
       }
       return l.copyWith(status: SessionStatus.closed, playerIds: playerIds);
     });
@@ -417,13 +422,29 @@ class _VoteTabState extends State<_VoteTab> {
               children: [
                 Row(
                   children: [
-                    Icon(voting ? Icons.how_to_vote : Icons.lock, size: 20),
+                    Icon(voting ? (s.voteExpired ? Icons.timer_off_outlined : Icons.how_to_vote) : Icons.lock,
+                        size: 20),
                     const SizedBox(width: 8),
-                    Text(voting ? 'Đang vote' : 'Đã chốt danh sách',
+                    Text(
+                        !voting
+                            ? 'Đã chốt danh sách'
+                            : s.voteExpired
+                                ? 'Hết hạn vote (sẽ tự chốt)'
+                                : 'Đang vote',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     const Spacer(),
-                    Text('${s.votedYes.length}/${players.length} đi'),
+                    Text('${s.votedYes.length}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} đi'
+                        '${s.isFull ? ' · đủ người' : ''}'),
                   ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    if (s.createdByName.isNotEmpty) 'Người tạo: ${s.createdByName}',
+                    'Hạn vote: ${fmtDateTime(s.effectiveVoteDeadline)}',
+                    s.maxPlayers == null ? 'Không giới hạn số người' : 'Giới hạn ${s.maxPlayers} người',
+                  ].join(' · '),
+                  style: const TextStyle(fontSize: 12),
                 ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -557,14 +578,24 @@ class _VoteTabState extends State<_VoteTab> {
             onChanged: !voting
                 ? null
                 : (v) async {
+                    final vote = v ?? false;
                     if (store.isAdmin) {
-                      await onMutate((l) => l.copyWith(votes: {...l.votes, p.id: v ?? false}));
-                    } else {
-                      try {
-                        await store.repo.setVote(s.id, p.id, v ?? false);
-                      } catch (e) {
-                        if (context.mounted) showSnack(context, 'Không vote được: $e');
-                      }
+                      await onMutate((l) => l.copyWith(votes: {...l.votes, p.id: vote}));
+                      return;
+                    }
+                    // Người thường: tôn trọng hạn vote và giới hạn số người.
+                    if (s.voteExpired) {
+                      showSnack(context, 'Đã hết hạn vote (${fmtDateTime(s.effectiveVoteDeadline)})');
+                      return;
+                    }
+                    if (vote && s.isFull && s.votes[p.id] != true) {
+                      showSnack(context, 'Đã đủ ${s.maxPlayers} người, không nhận thêm');
+                      return;
+                    }
+                    try {
+                      await store.repo.setVote(s.id, p.id, vote);
+                    } catch (e) {
+                      if (context.mounted) showSnack(context, 'Không vote được: $e');
                     }
                   },
           ),

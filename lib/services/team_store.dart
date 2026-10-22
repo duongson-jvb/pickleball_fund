@@ -44,6 +44,7 @@ class TeamStore extends ChangeNotifier {
         _loaded.add('sessions');
         notifyListeners();
         _processInbox();
+        _autoCloseExpiredVotes();
       }, onError: _onError),
       repo.watchExpenses().listen((v) {
         expenses = v;
@@ -60,11 +61,47 @@ class TeamStore extends ChangeNotifier {
         }
       }, onError: (_) {}),
     ];
+    // Hạn vote trôi qua mà dữ liệu không đổi → kiểm tra định kỳ để tự chốt.
+    _deadlineTimer = Timer.periodic(const Duration(minutes: 1), (_) => _autoCloseExpiredVotes());
   }
 
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _pendingInbox = [];
   bool _processingInbox = false;
   bool _inboxDirty = false;
+
+  // ------------------------------------------------ tự chốt khi hết hạn vote
+  final Set<String> _closing = {};
+  Timer? _deadlineTimer;
+
+  /// Buổi đang vote mà đã quá hạn → tự chốt danh sách (lấy người vote "đi",
+  /// cắt theo giới hạn nếu có). Chỉ máy quản trị mới ghi được.
+  Future<void> _autoCloseExpiredVotes() async {
+    if (!isAdmin) return;
+    for (final s in sessions) {
+      if (s.status != SessionStatus.voting || !s.voteExpired) continue;
+      if (_closing.contains(s.id)) continue;
+      _closing.add(s.id);
+      try {
+        var ids = [...s.playerIds];
+        for (final id in s.votedYes) {
+          if (!ids.contains(id)) ids.add(id);
+        }
+        if (s.maxPlayers != null && ids.length > s.maxPlayers!) {
+          ids = ids.sublist(0, s.maxPlayers!);
+        }
+        await repo.saveAndSettleSession(
+          s.copyWith(status: SessionStatus.closed, playerIds: ids),
+          commonFundExcludingThis: commonFundExcluding(s.id),
+        );
+        lastZaloInboxSummary = 'Đã tự chốt "${s.title.isEmpty ? 'buổi chơi' : s.title}" khi hết hạn vote';
+        notifyListeners();
+      } catch (_) {
+        // Thử lại ở lần kiểm tra sau.
+      } finally {
+        _closing.remove(s.id);
+      }
+    }
+  }
   String? lastZaloInboxSummary;
 
   /// Biến các tin trong zaloInbox thành vote rồi xoá khỏi hộp thư.
@@ -199,6 +236,7 @@ class TeamStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _deadlineTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
