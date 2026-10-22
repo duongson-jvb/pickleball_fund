@@ -7,6 +7,7 @@ export const maxDuration = 60;
 
 function buildEnv() {
   return {
+    ...process.env,
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || 'pickleball-fund-phm',
     FIREBASE_API_KEY: process.env.FIREBASE_API_KEY || '',
     ZALO_SECRET: process.env.ZALO_SECRET || '',
