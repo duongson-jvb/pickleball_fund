@@ -1,4 +1,14 @@
-# Zalo webhook + proxy trên Cloudflare Workers
+# Zalo webhook + proxy
+
+> **Quan trọng (21–22/10/2026):** Cloudflare chặn request của máy chủ Zalo (User-Agent `Java/...`, lỗi 1010
+> Browser Integrity Check) trên cả `*.workers.dev` lẫn `*.pages.dev`, không tắt được nếu không có tên miền riêng.
+> Vì vậy **webhook chạy trên Vercel** (`api/` ở gốc repo, cùng code với `worker/src/index.js`):
+> `https://pickleball-zalo-webhook.vercel.app/<mã nhóm>`. Deploy: `npx vercel deploy --prod` ở gốc repo.
+> Biến môi trường trên Vercel: `ZALO_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`.
+> Cloudflare Worker vẫn deploy để làm proxy cho bản web (trình duyệt không bị chặn). App gọi proxy dạng
+> `POST /<mã nhóm>?zalo=<method>` (không dùng thêm đoạn đường dẫn vì catch-all của Vercel không khớp nhiều đoạn).
+
+## Cloudflare Workers (proxy cho bản web)
 
 Worker làm hai việc, miễn phí (gói Free của Cloudflare: 100.000 request/ngày):
 

@@ -158,8 +158,10 @@ class ZaloBotService {
     final http.Response res;
     try {
       if (viaProxy) {
+        // Dùng query ?zalo=<method> (không thêm đoạn đường dẫn) để chạy được
+        // trên cả Cloudflare Worker lẫn Vercel Function.
         res = await _client
-            .post(Uri.parse('$proxyUrl/zalo/$method'),
+            .post(Uri.parse('$proxyUrl?zalo=$method'),
                 headers: {
                   'Content-Type': 'application/json',
                   'X-Bot-Api-Secret-Token': proxySecret ?? '',
