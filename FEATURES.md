@@ -25,7 +25,8 @@ Mọi dịch vụ đều ở gói miễn phí, không cần thẻ.
 ## 2. Người chơi
 
 - Thêm, sửa, xoá; tắt "Đang hoạt động" khi tạm nghỉ (không bị chia tiền chung).
-- Xoá người thì xoá luôn lịch sử giao dịch của người đó.
+- Xoá người thì xoá luôn lịch sử giao dịch của người đó, gỡ họ khỏi mọi buổi chơi và chi phí rồi tính lại
+  (phần tiền họ đang gánh chia lại cho người còn lại, không để "tiền ma").
 - Chi tiết người chơi: số dư, đã nộp, đã chi, lịch sử, nộp quỹ, điều chỉnh thủ công (+/−), chia sẻ số dư.
 - Người reply vote trên Zalo mà chưa có trong danh sách được **tự thêm** (tên theo Zalo, ghi chú "Tự thêm từ Zalo", nhớ Zalo id).
 
@@ -46,7 +47,7 @@ Mọi dịch vụ đều ở gói miễn phí, không cần thẻ.
 | Tạo buổi | Tiêu đề, ngày giờ, địa điểm, tiền sân (nhập sau được), ảnh đặt sân, ghi chú. **Người tạo** (bắt buộc, gợi ý từ danh sách). **Hạn vote** (mặc định = giờ chơi, không muộn hơn giờ chơi, cách lúc tạo ≥ 30 phút). **Giới hạn số người** (trống = không giới hạn). |
 | Vote trong app | Tick đi/không cho từng người. Người thường chỉ vote khi còn hạn và chưa đủ người. |
 | Vote qua Zalo | "Gửi vote qua bot" → thành viên reply `1`/`0`. Đổi ý reply lại. Chỉ tính tin gửi **sau khi tạo buổi** và **trước hạn vote**. Đủ người thì không nhận thêm "đi" (người đã đi vẫn đổi ý được). |
-| Tự chốt | Hết hạn vote → máy quản trị tự chốt danh sách (cắt theo giới hạn), tính tiền. Kiểm tra mỗi phút. |
+| Tự chốt | Hết hạn vote → máy quản trị tự chốt danh sách, tính tiền. Kiểm tra mỗi phút. Khi phải cắt theo giới hạn, **ai vote trước được ưu tiên** (app lưu thời điểm vote). |
 | Chốt tay / sửa danh sách | Chốt danh sách từ vote; sau đó vẫn thêm/bớt người thực tế, thêm **khách** (chia tiền sân, trả tiền mặt, không trừ quỹ). Tiền tự tính lại. |
 | Tiền sân | Chia theo đầu người (người chơi + khách). Phần của người chơi: **trừ quỹ chung trước**, hết thì **chia đều phần thiếu**. |
 | Tiền nước | Nhiều loại, giá khác nhau, mỗi người tự trả theo số lượng × giá của buổi. +/− trong tab Nước. |
@@ -75,7 +76,7 @@ Bot `Bot PickleBall JVB` trong nhóm. Bot chỉ thấy tin **reply** bot hoặc 
 | `help`, `hướng dẫn`, `?` | Hướng dẫn 6 dòng (trả lời tức thì). |
 | `nước`, `giá nước` | Danh sách nước kèm mã `N1, N2...` và giá hôm nay (tức thì). |
 | `N1 2` · `revive 2, suối 1` · `+1 N1` · `N1 0` | Ghi/cộng/xoá nước cho mình vào buổi gần nhất mình tham gia; tính lại tiền; bot xác nhận kèm tổng tiền nước. Không phân biệt hoa thường, dấu. |
-| `@An N1 2 @Bình N2 1` | Nhập hộ nhiều người trong một tin; phần trước @ đầu tiên là của người gửi. Người chưa trong buổi thì được thêm vào danh sách chơi. |
+| `@An N1 2 @Bình N2 1` | Nhập hộ nhiều người trong một tin; phần trước @ đầu tiên là của người gửi. Người chưa có trong buổi vẫn được ghi nước (trừ đúng người uống) nhưng **không** tự thêm vào danh sách chơi, bot nhắc quản lý thêm nếu họ có chơi. Thiếu số lượng ("N1 2 N2") thì bot báo lỗi rõ. |
 | `quỹ`, `số dư` | Bảng số dư cả nhóm + quỹ chung; người dưới 10.000đ có ⚠️; kèm thông tin chuyển khoản và **ảnh QR** nếu có người sắp hết (tức thì). |
 | Câu hỏi khác | **AI (Gemini) trả lời** tức thì, biết buổi sắp tới, bảng giá nước, các lệnh; xưng "em"; không bịa số liệu. Hết hạn mức → báo vui vẻ kèm lúc hỏi lại. |
 | Báo quỹ tự động | Mỗi **Chủ nhật 9:00** (giờ Việt Nam) bot gửi bảng quỹ vào nhóm; có người dưới 10.000đ thì kèm thông tin CK + QR, không thì không gửi QR. |
@@ -100,4 +101,4 @@ Cài đặt trong app → Zalo Bot: token, tìm nhóm (@bot trong nhóm), webhoo
 - Xử lý vote/nước từ Zalo chỉ chạy khi có máy đang mở khoá quản trị (tin chờ trong hộp thư, không mất). Help/nước/quỹ/AI thì trả lời ngay không cần app.
 - Gói Vercel miễn phí có thể lệch giờ cron trong khung giờ đã đặt.
 - Hạn mức Gemini miễn phí có giới hạn theo phút/ngày; bot tự báo khi chạm.
-- Xoá hẳn người chơi đang nằm trong buổi cũ để lại tên "(đã xoá)"; nên tắt "Đang hoạt động" thay vì xoá.
+- Xoá hẳn người chơi sẽ chia lại tiền sân/chi phí họ đang gánh cho người còn lại; muốn giữ lịch sử thì tắt "Đang hoạt động" thay vì xoá.

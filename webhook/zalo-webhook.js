@@ -656,7 +656,7 @@ async function sendFundReport(env, teamId, chatId, { weekly }) {
 
 function isHelpCommand(text) {
   const t = normalizeVi(text).replace(/@\S+/g, ' ').replace(/[?!.,]+/g, ' ');
-  return /(^|\s)(help|huong dan|tro giup|menu|lenh|cach dung|hdsd)(\s|$)/.test(t)
+  return (/(^|\s)(help|huong dan|tro giup|lenh|cach dung|hdsd)(\s|$)/.test(t) || /^menu$/.test(t.trim()))
     || /^\s*\?\s*$/.test(normalizeVi(text).replace(/@\S+/g, ''));
 }
 

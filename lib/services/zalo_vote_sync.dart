@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+
 import '../models/models.dart';
 import '../utils/format.dart';
 import '../utils/text.dart';
@@ -113,6 +115,7 @@ class ZaloVoteSync {
     final groupId = settings.zaloGroupId;
 
     final votes = {...session.votes};
+    final voteTimes = {...session.voteTimes};
     final pending = {for (final p in session.zaloPending) p.zaloId: p};
     final applied = <String>[];
     final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
@@ -221,6 +224,7 @@ class ZaloVoteSync {
 
       if (player != null && vote != null) {
         votes[player.id] = vote;
+        voteTimes[player.id] = u.date;
         pending.remove(u.fromId);
         if (!applied.contains(player.name)) applied.add(player.name);
         // Ghi nhớ Zalo id để lần sau khớp chính xác.
@@ -244,6 +248,7 @@ class ZaloVoteSync {
     if (applied.isNotEmpty || pending.length != session.zaloPending.length) {
       await store.repo.updateSessionFields(session.id, {
         'votes': votes,
+        'voteTimes': voteTimes.map((k, v) => MapEntry(k, Timestamp.fromDate(v))),
         'zaloPending': pending.values.map((e) => e.toMap()).toList(),
       });
     }
@@ -297,11 +302,9 @@ class ZaloVoteSync {
         continue;
       }
       var s = touched[session.id] ?? session;
-      var addedToSession = false;
-      if (!s.playerIds.contains(target.id)) {
-        s = s.copyWith(playerIds: [...s.playerIds, target.id]);
-        addedToSession = true;
-      }
+      // KHÔNG tự thêm người vào danh sách chơi (sẽ làm tiền sân của người khác
+      // đổi). Chỉ ghi nước; quản lý thêm họ vào buổi nếu họ có chơi.
+      final notInSession = !s.playerIds.contains(target.id);
       // Đóng băng giá nước cho các loại chưa có giá trong buổi.
       final prices = {...s.drinkPrices};
       for (final c in a.command.changes) {
@@ -323,7 +326,7 @@ class ZaloVoteSync {
       lines.add(parts.isEmpty
           ? '✅ ${target.name}: đã xoá nước ở "$label".'
           : '✅ ${target.name} ($label): ${parts.join(', ')} = ${vnd(total)}'
-              '${addedToSession ? ' · đã thêm vào danh sách chơi' : ''}.');
+              '${notInSession ? ' · chưa có trong danh sách chơi buổi này, quản lý thêm nếu có chơi' : ''}.');
       notes.add('${target.name}: ${parts.isEmpty ? 'xoá nước' : parts.join(', ')}');
     }
 

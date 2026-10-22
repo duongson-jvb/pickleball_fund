@@ -109,7 +109,8 @@ class ShareService {
       if (st.guestCash > 0) sb.writeln('   - Khách trả tiền mặt: ${vnd(st.guestCash)}');
     }
     sb.writeln('—');
-    for (final pid in s.playerIds) {
+    // Gồm cả người không trong danh sách chơi nhưng có ghi nước (nhập hộ qua Zalo).
+    for (final pid in {...s.playerIds, ...s.drinks.keys}) {
       final court = st.courtPerPlayer[pid] ?? 0;
       final drink = st.drinkPerPlayer[pid] ?? 0;
       final parts = <String>[];

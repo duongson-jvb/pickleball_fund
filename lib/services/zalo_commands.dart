@@ -15,8 +15,9 @@ class ZaloCommands {
       '• Hỏi gì cứ @bot, em trả lời\n'
       '• App: $appUrl';
 
+  // "menu" chỉ tính khi đứng một mình: "menu nước" là xem danh sách nước.
   static final _helpPattern =
-      RegExp(r'(^|\s)(help|huong dan|tro giup|menu|lenh|cach dung|hdsd)(\s|$)');
+      RegExp(r'(^|\s)(help|huong dan|tro giup|lenh|cach dung|hdsd)(\s|$)|^menu$');
   static final _fundPattern =
       RegExp(r'^(quy|so du|bao quy|tien quy|quy nhom|xem quy|quy team)$');
 

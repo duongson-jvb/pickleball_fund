@@ -89,7 +89,17 @@ class ZaloDrinks {
       done.add(d.id);
       padded = padded.replaceRange(m.start, m.end, ' ');
     }
-    if (changes.isNotEmpty) return DrinkCommand(changes);
+    if (changes.isNotEmpty) {
+      // Còn tên nước nào trong tin mà thiếu số lượng ("N1 2 N2") → báo lỗi,
+      // không im lặng bỏ qua.
+      for (final (d, alias) in pairs) {
+        if (done.contains(d.id)) continue;
+        if (RegExp('(^|\\s|,)${RegExp.escape(alias)}(\\s|,|\$)').hasMatch(padded)) {
+          return DrinkCommand([], error: 'Thiếu số lượng cho ${d.name}');
+        }
+      }
+      return DrinkCommand(changes);
+    }
     t = padded.trim();
 
     // Chỉ có số, không có tên: "nước 2", "+1 nước"

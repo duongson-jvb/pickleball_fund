@@ -388,16 +388,11 @@ class _VoteTabState extends State<_VoteTab> {
       danger: false,
     );
     if (!ok) return;
-    await onMutate((l) {
-      var playerIds = [...l.playerIds];
-      for (final id in l.votedYes) {
-        if (!playerIds.contains(id)) playerIds.add(id);
-      }
-      if (l.maxPlayers != null && playerIds.length > l.maxPlayers!) {
-        playerIds = playerIds.sublist(0, l.maxPlayers!);
-      }
-      return l.copyWith(status: SessionStatus.closed, playerIds: playerIds);
-    });
+    await onMutate((l) => l.copyWith(
+          status: SessionStatus.closed,
+          // Người vote trước được ưu tiên khi phải cắt theo giới hạn.
+          playerIds: l.playersForClosing(),
+        ));
     widget.onClosed();
   }
 
@@ -578,7 +573,10 @@ class _VoteTabState extends State<_VoteTab> {
                 : (v) async {
                     final vote = v ?? false;
                     if (store.isAdmin) {
-                      await onMutate((l) => l.copyWith(votes: {...l.votes, p.id: vote}));
+                      await onMutate((l) => l.copyWith(
+                            votes: {...l.votes, p.id: vote},
+                            voteTimes: {...l.voteTimes, p.id: DateTime.now()},
+                          ));
                       return;
                     }
                     // Người thường: tôn trọng hạn vote và giới hạn số người.
@@ -857,7 +855,7 @@ class _DrinksTab extends StatelessWidget {
             ),
           ),
         ),
-        for (final pid in s.playerIds)
+        for (final pid in {...s.playerIds, ...s.drinks.keys})
           Card(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -971,7 +969,7 @@ class _SummaryTab extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Text('Từng người', style: TextStyle(fontWeight: FontWeight.bold)),
         ),
-        for (final pid in s.playerIds)
+        for (final pid in {...s.playerIds, ...s.drinks.keys})
           ListTile(
             dense: true,
             title: Text(store.playerName(pid)),

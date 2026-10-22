@@ -1,16 +1,15 @@
 // Bài kiểm tra rà soát (22/10/2026): mỗi test mô tả hành vi ĐÚNG mà người dùng
 // mong đợi, nên test nào đỏ là một lỗi thật.
 //
-// Nhóm lỗi tính tiền (A, C, F, G) đã sửa ngày 22/10 - các test đó nay là test
-// hồi quy, đỏ trở lại nghĩa là lỗi tái phát.
-// Nhóm lỗi bot/Zalo (B2, D1, E1, E2) chưa sửa, đang để `skip` kèm lý do.
+// Nhóm lỗi tính tiền (A, C, F, G) và nhóm bot/Zalo (B2, D1, E1, E2, H1) đều đã
+// sửa ngày 22/10 - các test này là test hồi quy, đỏ trở lại nghĩa là lỗi tái phát.
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickleball_fund/models/models.dart';
-import 'package:pickleball_fund/services/settlement.dart';
 import 'package:pickleball_fund/services/share_service.dart';
 import 'package:pickleball_fund/services/team_repository.dart';
 import 'package:pickleball_fund/services/team_store.dart';
+import 'package:pickleball_fund/services/zalo_bot_service.dart';
 import 'package:pickleball_fund/services/zalo_commands.dart';
 import 'package:pickleball_fund/services/zalo_drinks.dart';
 import 'package:pickleball_fund/services/zalo_vote_sync.dart';
@@ -69,7 +68,7 @@ void main() {
       // "Nước" dạng tổ hợp: n + ư + ơ + dấu sắc rời.
       final nfd = 'Nước';
       expect(normalizeVi(nfd), 'nuoc');
-    }, skip: 'Lỗi B9 chưa sửa (nhóm bot/Zalo) - xem docs/bao-cao-kiem-thu-2026-10-22.md');
+    });
   });
 
   group('C. Khớp tên người chơi', () {
@@ -97,7 +96,9 @@ void main() {
       expect(ZaloCommands.isCommand('menu nuoc'), isFalse,
           reason: '"menu nuoc" bị nhận là lệnh help nên không trả danh sách nước');
       expect(ZaloDrinks.isListRequest('menu nuoc'), isTrue);
-    }, skip: 'Lỗi B7 chưa sửa (nhóm bot/Zalo) - xem docs/bao-cao-kiem-thu-2026-10-22.md');
+      // "menu" đứng một mình vẫn là help.
+      expect(ZaloCommands.isCommand('menu'), isTrue);
+    });
 
     test('D2. "bảng giá nước" vẫn là yêu cầu xem danh sách', () {
       expect(ZaloCommands.isCommand('bang gia nuoc'), isFalse);
@@ -114,27 +115,46 @@ void main() {
     test('E1. "N1 2 N2" (thiếu số cho N2) phải báo lỗi, không im lặng bỏ qua', () {
       final c = ZaloDrinks.parse('n1 2 n2', types);
       // Hiện tại: chỉ ghi N1, N2 bị bỏ qua không báo gì.
-      expect(c.changes.length == 2 || c.error != null, isTrue,
-          reason: 'N2 bị bỏ lặng lẽ: ${c.changes.length} thay đổi, lỗi=${c.error}');
-    }, skip: 'Lỗi B8 chưa sửa (nhóm bot/Zalo) - xem docs/bao-cao-kiem-thu-2026-10-22.md');
+      expect(c.changes, isEmpty);
+      expect(c.error, contains('Nước suối'),
+          reason: 'N2 thiếu số lượng phải được báo rõ: ${c.error}');
+    });
 
-    test('E2. ghi nước cho người không có trong buổi không được tự tính tiền sân', () {
-      // Người được @ chưa chơi buổi đó: thêm vào playerIds làm tiền sân chia lại.
-      final s = Session(
-        id: 's1',
-        title: 'B',
-        date: DateTime(2026, 10, 20, 18),
-        courtFee: 200000,
-        playerIds: const ['p1', 'p2'],
-        createdAt: DateTime(2026, 10, 19),
-      );
-      final before = Settlement.computeSession(session: s, commonFundAvailable: 0);
-      final after = Settlement.computeSession(
-          session: s.copyWith(playerIds: [...s.playerIds, 'p3']),
-          commonFundAvailable: 0);
-      expect(after.courtPerPlayer['p1'], before.courtPerPlayer['p1'],
-          reason: 'thêm người vào buổi khi ghi nước làm tiền sân của người khác đổi');
-    }, skip: 'Lỗi B10 chưa sửa (nhóm bot/Zalo) - xem docs/bao-cao-kiem-thu-2026-10-22.md');
+    test('E2. nhập hộ nước cho người không có trong buổi: ghi nước, KHÔNG thêm vào danh sách chơi', () async {
+      final (:repo, :store) = await boot();
+      await repo.addPlayer('An');
+      await repo.addPlayer('Bình');
+      await repo.addPlayer('Chi');
+      await repo.addDrinkType('Revive', 15000, code: 1);
+      await repo.updateSettings({'zaloBotToken': 'x:y', 'zaloGroupId': 'g1'});
+      await settle();
+      final an = store.players.firstWhere((p) => p.name == 'An');
+      final binh = store.players.firstWhere((p) => p.name == 'Bình');
+      final chi = store.players.firstWhere((p) => p.name == 'Chi');
+      await repo.updatePlayer(an.id, {'zaloId': 'z-an'});
+      final now = DateTime.now();
+      final sid = await repo.createSession(Session(
+        id: '', title: 'B', date: now.subtract(const Duration(hours: 1)),
+        courtFee: 200000, playerIds: [an.id, binh.id], status: SessionStatus.closed,
+        drinkPrices: store.defaultDrinkPrices(now), createdAt: now.subtract(const Duration(days: 1)),
+      ));
+      await settle();
+      await repo.saveAndSettleSession(store.sessions.firstWhere((s) => s.id == sid));
+      await settle();
+      final courtBefore = store.sessions.firstWhere((s) => s.id == sid).settlement.courtPerPlayer[an.id];
+
+      // An nhập hộ cho Chi (không chơi buổi này).
+      await ZaloVoteSync.apply(store, [
+        ZaloUpdate(eventName: 'message.text.received', messageId: 'm', fromId: 'z-an', fromName: 'An',
+            chatId: 'g1', chatType: 'GROUP', text: '@Chi N1 2', date: now),
+      ], target: store.sessions.firstWhere((s) => s.id == sid));
+      await settle();
+      final s = store.sessions.firstWhere((x) => x.id == sid);
+      expect(s.playerIds, isNot(contains(chi.id)), reason: 'không tự thêm vào danh sách chơi');
+      expect(s.drinks[chi.id]?.values.single, 2, reason: 'nước vẫn được ghi');
+      expect(store.balanceOf(chi.id), -30000, reason: 'tiền nước trừ đúng người uống');
+      expect(s.settlement.courtPerPlayer[an.id], courtBefore, reason: 'tiền sân người khác không đổi');
+    });
   });
 
   group('F. Toàn vẹn dữ liệu khi xoá người chơi', () {
@@ -211,21 +231,27 @@ void main() {
 
   group('H. Hạn vote & giới hạn người', () {
     test('H1. chốt danh sách khi quá giới hạn phải ưu tiên người vote trước', () {
-      // votes là Map nên thứ tự không theo thời gian vote; cắt sublist là tuỳ ý.
       final s = Session(
         id: 's1',
         title: 'B',
         date: DateTime(2026, 10, 25, 18),
         maxPlayers: 2,
-        votes: const {'p3': true, 'p1': true, 'p2': true},
+        votes: const {'p3': true, 'p1': true, 'p2': true, 'p4': false},
+        voteTimes: {
+          'p3': DateTime(2026, 10, 21, 10), // vote sau cùng
+          'p1': DateTime(2026, 10, 21, 8),
+          'p2': DateTime(2026, 10, 21, 9),
+        },
         createdAt: DateTime(2026, 10, 20),
       );
-      final ids = [...s.playerIds, ...s.votedYes.where((e) => !s.playerIds.contains(e))];
-      final cut = ids.sublist(0, s.maxPlayers!);
-      expect(cut.length, 2);
-      // Không có mốc thời gian vote nào được lưu để quyết định ai bị cắt.
-      expect(s.votes.length, 3);
-    }, skip: 'Không có dữ liệu thời điểm vote để kiểm chứng – xem báo cáo');
+      expect(s.votedYesByTime, ['p1', 'p2', 'p3']);
+      expect(s.playersForClosing(), ['p1', 'p2'], reason: 'p3 vote muộn nhất bị cắt');
+      // Người đã có sẵn trong danh sách luôn giữ chỗ.
+      expect(s.copyWith(playerIds: ['p3']).playersForClosing(), ['p3', 'p1']);
+      // Không có mốc thời gian → xếp sau cùng, giữ thứ tự hiện có.
+      final noTimes = s.copyWith(voteTimes: {'p2': DateTime(2026, 10, 21)});
+      expect(noTimes.votedYesByTime.first, 'p2');
+    });
   });
 
   group('I. Giới hạn ảnh base64 so với 1MB của Firestore', () {

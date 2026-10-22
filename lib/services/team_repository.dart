@@ -110,7 +110,11 @@ class TeamRepository {
 
   /// Người thường (không phải quản trị) chỉ được đổi vote của buổi đang mở vote.
   Future<void> setVote(String sessionId, String playerId, bool vote) =>
-      sessions.doc(sessionId).update({'votes.$playerId': vote});
+      sessions.doc(sessionId).update({
+        'votes.$playerId': vote,
+        // Mốc thời gian vote để khi đủ người thì ưu tiên ai vote trước.
+        'voteTimes.$playerId': Timestamp.fromDate(DateTime.now()),
+      });
 
   // -------------------------------------------- số liệu gốc lúc tính tiền
   /// Số dư quỹ chung đọc THẲNG từ Firestore, bỏ qua các dòng của

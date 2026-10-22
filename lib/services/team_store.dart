@@ -83,13 +83,8 @@ class TeamStore extends ChangeNotifier {
       if (_closing.contains(s.id)) continue;
       _closing.add(s.id);
       try {
-        var ids = [...s.playerIds];
-        for (final id in s.votedYes) {
-          if (!ids.contains(id)) ids.add(id);
-        }
-        if (s.maxPlayers != null && ids.length > s.maxPlayers!) {
-          ids = ids.sublist(0, s.maxPlayers!);
-        }
+        // Ưu tiên người vote trước khi phải cắt theo giới hạn.
+        final ids = s.playersForClosing();
         await repo.saveAndSettleSession(
             s.copyWith(status: SessionStatus.closed, playerIds: ids));
         lastZaloInboxSummary = 'Đã tự chốt "${s.title.isEmpty ? 'buổi chơi' : s.title}" khi hết hạn vote';

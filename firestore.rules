@@ -48,7 +48,7 @@ service cloud.firestore {
               ? resource.data.voteDeadline
               : resource.data.date
           )
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes', 'voteTimes'])
         );
       }
 

@@ -26,6 +26,9 @@ String normalizeVi(String s) {
   for (var i = 0; i < withDiacritics.length; i++) {
     out = out.replaceAll(withDiacritics[i], without[i]);
   }
+  // Chuỗi dạng tổ hợp (NFD, hay gặp trên Mac/iPhone): "ư" = u + U+031B,
+  // dấu thanh là ký tự rời U+0300–U+036F → bỏ hết các dấu kết hợp.
+  out = out.replaceAll(RegExp(r'[\u0300-\u036f]'), '');
   return out.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
