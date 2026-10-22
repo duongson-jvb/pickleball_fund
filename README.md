@@ -83,11 +83,17 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
 2. App → Cài đặt → **Zalo Bot** → dán token → *Kiểm tra & lưu*.
 3. Bot Creator → *Mời Bot vào nhóm* → gửi link vào nhóm, trưởng nhóm bấm link.
 4. App → *Tìm nhóm*, rồi vào nhóm gõ `@tên bot` để app nhận ra `chat_id` nhóm.
-5. Ở buổi chơi → tab Vote → **Gửi vote qua bot**. Thành viên **Reply** tin của bot: `1` = đi, `0` = không đi.
-   App khớp người gửi với người chơi (lần đầu theo tên hiển thị, sau đó nhớ Zalo id).
-   Người reply vote mà **chưa có trong danh sách sẽ được tự thêm** làm người chơi mới (tên theo Zalo, ghi chú "Tự thêm từ Zalo").
-   Tin không rõ nghĩa (không phải 1/0/đi/không) hiện ở mục "chưa khớp" để gán tay.
-   **Chỉ tính tin gửi sau khi buổi chơi được tạo**; tin gửi trước đó hoặc khi chưa có buổi nào đang vote thì bỏ qua.
+5. Ở buổi chơi → tab Vote → **Gửi vote qua bot**. Thành viên **Reply** tin của bot: `0` = không đi,
+   `1` = đi, `2` = đi 2 người (kèm 1), `3` = kèm 2... (tối đa 4 suất; tiền sân và tiền nước của
+   người đính kèm trừ vào người vote).
+   Bot **ghi vote thẳng vào buổi và xác nhận ngay trong chat** ("đã có N suất"), không cần ai mở app.
+   Người gửi được khớp với người chơi (lần đầu theo tên hiển thị, sau đó nhớ Zalo id); ai **chưa có
+   trong danh sách** thì bot báo đã nhận, rồi **tự thêm** làm người chơi mới (tên theo Zalo, ghi chú
+   "Tự thêm từ Zalo") và ghi vote khi quản lý mở app.
+   Tin không phải vote (câu hỏi, trò chuyện) thì bot trả lời chứ **không** đưa vào mục "chưa khớp".
+   Mục đó giờ chỉ còn nhận vote không xác định được người gửi (tin không kèm Zalo id) để gán tay.
+   **Chỉ tính tin gửi sau khi buổi chơi được tạo.** Gõ số sai ("10", "01", "1,2,3"), vote khi chưa có
+   buổi nào đang mở vote, hoặc vote sau hạn — bot đều **báo lại** chứ không im lặng bỏ qua.
 6. **Ghi nước qua Zalo**: gõ `@bot nước` để bot liệt kê các loại nước kèm **mã ngắn** (N1, N2...) và giá hiện tại
    (webhook trả lời ngay). Rồi reply/@bot `N1 2`, `N1 2, N2 1`, `nước 2` (khi chỉ có một loại), `revive 2, suối 1`,
    `+1 N1` (cộng thêm), `N1 0` (xoá). Mã ngắn tự gán khi tạo loại nước, hiện trong Cài đặt → Loại nước & giá.
