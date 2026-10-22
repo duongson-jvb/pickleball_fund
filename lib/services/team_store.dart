@@ -85,7 +85,8 @@ class TeamStore extends ChangeNotifier {
       if (updates.isNotEmpty) {
         final r = await ZaloVoteSync.apply(this, updates);
         if (r.appliedNames.isNotEmpty) {
-          lastZaloInboxSummary = 'Đã nhận vote từ Zalo: ${r.appliedNames.join(', ')}';
+          lastZaloInboxSummary = 'Đã nhận vote từ Zalo: ${r.appliedNames.join(', ')}'
+              '${r.createdNames.isNotEmpty ? ' · tự thêm: ${r.createdNames.join(', ')}' : ''}';
         }
         // Chưa có buổi nào đang vote: giữ lại tin giống vote tối đa 3 ngày,
         // để khi tạo buổi mới sẽ được tính.

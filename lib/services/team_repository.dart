@@ -110,6 +110,27 @@ class TeamRepository {
   Future<void> updatePlayer(String id, Map<String, dynamic> data) =>
       players.doc(id).update(data);
 
+  /// Tự tạo người chơi từ người reply trên Zalo (chưa có trong danh sách).
+  /// Trả về id người chơi mới.
+  Future<String> addPlayerFromZalo({
+    required String zaloId,
+    required String zaloName,
+  }) async {
+    final name = zaloName.trim().isEmpty
+        ? 'Zalo ${zaloId.length > 4 ? zaloId.substring(zaloId.length - 4) : zaloId}'
+        : zaloName.trim();
+    final ref = await players.add({
+      'name': name,
+      'phone': '',
+      'note': 'Tự thêm từ Zalo',
+      'active': true,
+      'zaloId': zaloId,
+      'zaloName': zaloName,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    return ref.id;
+  }
+
   /// Xoá người chơi và toàn bộ giao dịch của người đó.
   Future<void> deletePlayer(String id) async {
     final batch = _db.batch();

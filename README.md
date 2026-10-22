@@ -69,8 +69,9 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
 3. Bot Creator → *Mời Bot vào nhóm* → gửi link vào nhóm, trưởng nhóm bấm link.
 4. App → *Tìm nhóm*, rồi vào nhóm gõ `@tên bot` để app nhận ra `chat_id` nhóm.
 5. Ở buổi chơi → tab Vote → **Gửi vote qua bot**. Thành viên **Reply** tin của bot: `1` = đi, `0` = không đi.
-   App gọi `getUpdates` (long polling) khi đang mở tab Vote hoặc bấm *Đồng bộ ngay*, khớp người gửi với người chơi
-   (lần đầu theo tên hiển thị, sau đó nhớ Zalo id). Tin không khớp được tên hiện ở mục "chưa khớp" để gán tay.
+   App khớp người gửi với người chơi (lần đầu theo tên hiển thị, sau đó nhớ Zalo id).
+   Người reply vote mà **chưa có trong danh sách sẽ được tự thêm** làm người chơi mới (tên theo Zalo, ghi chú "Tự thêm từ Zalo").
+   Tin không rõ nghĩa (không phải 1/0/đi/không) hiện ở mục "chưa khớp" để gán tay.
 
 Giới hạn của Zalo Bot API: bot chỉ thấy tin **reply** hoặc **@mention** bot, không sửa/xoá tin, không có nút bấm,
 tính năng bot trong nhóm đang ở giai đoạn thử nghiệm. Token lưu trong tài liệu nhóm trên Firestore (ai có mã nhóm đều đọc được).

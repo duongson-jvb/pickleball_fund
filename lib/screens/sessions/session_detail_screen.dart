@@ -230,6 +230,7 @@ class _VoteTabState extends State<_VoteTab> {
     if (!mounted) return;
     final parts = <String>[];
     if (r.appliedNames.isNotEmpty) parts.add('Đã nhận vote: ${r.appliedNames.join(', ')}');
+    if (r.createdNames.isNotEmpty) parts.add('Tự thêm người chơi: ${r.createdNames.join(', ')}');
     if (r.pendingCount > 0) parts.add('${r.pendingCount} tin chưa khớp tên');
     if (parts.isNotEmpty) {
       setState(() => _botStatus = '${parts.join(' · ')} (${TimeOfDay.now().format(context)})');
