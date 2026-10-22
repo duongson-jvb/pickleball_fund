@@ -8,6 +8,7 @@ import 'zalo_commands.dart';
 class ZaloSyncResult {
   final Session? target;
   final List<String> appliedNames; // người đã cập nhật vote
+  final List<String> createdNames; // người chơi vừa tự tạo từ Zalo
   final int pendingCount; // tin chưa khớp được tên
   final int ignoredCount; // tin không thuộc nhóm / không phải vote
   /// Tin giống vote nhưng chưa có buổi nào đang vote để nhận → nên giữ lại.
@@ -15,6 +16,7 @@ class ZaloSyncResult {
   const ZaloSyncResult({
     required this.target,
     this.appliedNames = const [],
+    this.createdNames = const [],
     this.pendingCount = 0,
     this.ignoredCount = 0,
     this.unprocessedIds = const [],
@@ -106,6 +108,8 @@ class ZaloVoteSync {
     final votes = {...session.votes};
     final pending = {for (final p in session.zaloPending) p.zaloId: p};
     final applied = <String>[];
+    final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
+    final createdNames = <String>[];
     var ignored = 0;
 
     // Sắp xếp theo thời gian để tin sau ghi đè tin trước.
@@ -130,8 +134,26 @@ class ZaloVoteSync {
         continue;
       }
       final vote = parseVote(u.text, botName: settings.zaloBotName);
-      final player = matchPlayer(
+      var player = matchPlayer(
           zaloId: u.fromId, zaloName: u.fromName, players: store.activePlayers);
+      // Người vừa được tự tạo trong cùng đợt (stream chưa kịp cập nhật).
+      if (player == null && u.fromId.isNotEmpty && created.containsKey(u.fromId)) {
+        player = created[u.fromId];
+      }
+
+      // Người reply vote rõ nghĩa nhưng chưa có trong danh sách → tự thêm người chơi.
+      if (player == null && vote != null && u.fromId.isNotEmpty) {
+        final id = await store.repo.addPlayerFromZalo(zaloId: u.fromId, zaloName: u.fromName);
+        player = Player(
+          id: id,
+          name: u.fromName.trim().isEmpty ? 'Zalo ${u.fromId}' : u.fromName.trim(),
+          zaloId: u.fromId,
+          zaloName: u.fromName,
+          createdAt: DateTime.now(),
+        );
+        created[u.fromId] = player;
+        createdNames.add(player.name);
+      }
 
       if (player != null && vote != null) {
         votes[player.id] = vote;
@@ -164,6 +186,7 @@ class ZaloVoteSync {
     return ZaloSyncResult(
       target: session,
       appliedNames: applied,
+      createdNames: createdNames,
       pendingCount: pending.length,
       ignoredCount: ignored,
     );

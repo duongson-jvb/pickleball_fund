@@ -158,7 +158,7 @@ const HELP_TEXT = [
   '🏓 Bot Quỹ Pickleball',
   '• Vote đi chơi: Reply tin vote của bot → 1 = đi, 0 = không',
   '• Đổi ý: reply lại là xong',
-  '• Không thấy tên mình? Báo quản lý gán trong app',
+  '• Người mới cứ reply 1, bot tự thêm tên vào danh sách',
   `• Xem quỹ, tiền sân, tiền nước: ${APP_URL}`,
   '• Gõ @bot help để xem lại tin này',
 ].join('\n');

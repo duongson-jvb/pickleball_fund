@@ -266,27 +266,46 @@ void main() {
 
       await inbox('m1', 'z-an', 'An', '1');
       await inbox('m2', 'z-binh', 'binh', '@Bot Test không đi');
-      await inbox('m3', 'z-la', 'Người Lạ', 'đi');
-      await inbox('m4', 'z-other', 'Ai đó', '1', chat: 'g-khac');
+      await inbox('m3', 'z-la', 'Người Lạ', 'đi'); // chưa có trong DB → tự thêm
+      await inbox('m3b', 'z-la', 'Người Lạ', '1'); // cùng người, cùng đợt → không tạo trùng
+      await inbox('m5', 'z-hoi', 'Người Hỏi', 'mấy giờ vậy?'); // không rõ → chờ gán
+      await inbox('m4', 'z-other', 'Ai đó', '1', chat: 'g-khac'); // ngoài nhóm → bỏ qua
       await settle();
       await settle();
 
       final s = store.sessions.single;
       expect(s.votes[ids['Nguyễn Văn An']!], isTrue);
       expect(s.votes[ids['Bình']!], isFalse);
-      expect(s.zaloPending.map((p) => p.name), ['Người Lạ']);
       expect(store.playerById(ids['Nguyễn Văn An']!)!.zaloId, 'z-an', reason: 'nhớ Zalo id');
+
+      // Người lạ reply vote → tự tạo người chơi, có vote, nhớ Zalo id, không tạo trùng.
+      final la = store.players.where((p) => p.zaloId == 'z-la').toList();
+      expect(la.length, 1, reason: 'chỉ tạo một người cho cùng Zalo id');
+      expect(la.single.name, 'Người Lạ');
+      expect(la.single.active, isTrue);
+      expect(s.votes[la.single.id], isTrue);
+      expect(store.players.length, 3);
+
+      // Tin không rõ nghĩa từ người lạ → vẫn chờ gán, không tự tạo.
+      expect(s.zaloPending.map((p) => p.name), ['Người Hỏi']);
       expect(store.settings.zaloChats.keys, containsAll(['g1', 'g-khac']));
       final remaining = await repo.zaloInbox.get();
       expect(remaining.docs, isEmpty, reason: 'đã xử lý thì xoá hộp thư');
 
-      // Gán tay người lạ → vote, nhớ id.
+      // Gán tay tin chờ → vote, nhớ id.
       await ZaloVoteSync.resolvePending(store, store.sessions.single, s.zaloPending.single,
-          store.playerById(ids['Bình']!)!);
+          store.playerById(ids['Bình']!)!, voteOverride: true);
       await settle();
       expect(store.sessions.single.zaloPending, isEmpty);
       expect(store.sessions.single.votes[ids['Bình']!], isTrue);
-      expect(store.playerById(ids['Bình']!)!.zaloId, 'z-la');
+      expect(store.playerById(ids['Bình']!)!.zaloId, 'z-hoi');
+
+      // Lần sau cùng người lạ reply → khớp theo Zalo id đã lưu, không tạo thêm.
+      await inbox('m6', 'z-la', 'Tên Mới Đổi', '0');
+      await settle();
+      await settle();
+      expect(store.players.length, 3);
+      expect(store.sessions.single.votes[la.single.id], isFalse);
     });
 
     test('chưa có buổi vote: giữ lại tin giống vote, xoá tin khác', () async {
