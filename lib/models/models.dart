@@ -25,8 +25,9 @@ class TeamSettings {
   final String zaloBotName;
   final String zaloGroupId; // chat_id của nhóm Zalo đã chọn
   final String zaloGroupName;
-  final String zaloWebhookUrl; // URL Cloudflare Worker (rỗng = dùng getUpdates)
+  final String zaloWebhookUrl; // URL Worker/host webhook, cũng là proxy cho bản web
   final String zaloWebhookSecret;
+  final bool zaloWebhookEnabled; // true = Zalo đẩy tin về webhook; false = app tự hỏi (getUpdates)
   final Map<String, ZaloChat> zaloChats; // các chat bot từng nhận tin
 
   const TeamSettings({
@@ -41,11 +42,12 @@ class TeamSettings {
     this.zaloGroupName = '',
     this.zaloWebhookUrl = '',
     this.zaloWebhookSecret = '',
+    this.zaloWebhookEnabled = false,
     this.zaloChats = const {},
   });
 
   bool get hasZaloBot => zaloBotToken.isNotEmpty;
-  bool get zaloWebhookMode => zaloWebhookUrl.isNotEmpty;
+  bool get zaloWebhookMode => zaloWebhookEnabled && zaloWebhookUrl.isNotEmpty;
 
   factory TeamSettings.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data() ?? {};
@@ -65,6 +67,7 @@ class TeamSettings {
       zaloGroupName: (d['zaloGroupName'] as String?) ?? '',
       zaloWebhookUrl: (d['zaloWebhookUrl'] as String?) ?? '',
       zaloWebhookSecret: (d['zaloWebhookSecret'] as String?) ?? '',
+      zaloWebhookEnabled: d['zaloWebhookEnabled'] == true,
       zaloChats: chats,
     );
   }
