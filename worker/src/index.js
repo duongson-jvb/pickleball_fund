@@ -70,6 +70,12 @@ export default {
     const chatId = msg?.chat?.id;
     if (!chatId) return json({ ok: true, ignored: true });
 
+    // Lệnh "@bot help": trả lời hướng dẫn ngay, không ghi vào hộp thư vote.
+    const text = String(msg.text ?? '');
+    if (isHelpCommand(text)) {
+      return replyHelp(env, teamId, String(chatId));
+    }
+
     const messageId = String(msg.message_id || crypto.randomUUID());
     const dateMs = typeof msg.date === 'number'
       ? (msg.date > 1e11 ? msg.date : msg.date * 1000)
@@ -131,6 +137,56 @@ async function proxyZalo(method, request) {
     status: upstream.status,
     headers: { 'Content-Type': 'application/json', ...CORS },
   });
+}
+
+// ---------------------------------------------------------------- lệnh help
+const APP_URL = 'https://duongson-jvb.github.io/pickleball_fund/';
+
+const HELP_TEXT = [
+  '🏓 Bot Quỹ Pickleball',
+  '• Vote đi chơi: Reply tin vote của bot → 1 = đi, 0 = không',
+  '• Đổi ý: reply lại là xong',
+  '• Không thấy tên mình? Báo quản lý gán trong app',
+  `• Xem quỹ, tiền sân, tiền nước: ${APP_URL}`,
+  '• Gõ @bot help để xem lại tin này',
+].join('\n');
+
+/** Bỏ dấu tiếng Việt + viết thường để so khớp lệnh. */
+function normalizeVi(str) {
+  return String(str)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isHelpCommand(text) {
+  const t = normalizeVi(text).replace(/@\S+/g, ' ').replace(/[?!.,]+/g, ' ');
+  return /(^|\s)(help|huong dan|tro giup|menu|lenh|cach dung|hdsd)(\s|$)/.test(t)
+    || /^\s*\?\s*$/.test(normalizeVi(text).replace(/@\S+/g, ''));
+}
+
+/** Đọc bot token của nhóm từ Firestore rồi gửi hướng dẫn vào chat. */
+async function replyHelp(env, teamId, chatId) {
+  const docUrl =
+    `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}` +
+    `/databases/(default)/documents/teams/${encodeURIComponent(teamId)}` +
+    `?key=${env.FIREBASE_API_KEY}&mask.fieldPaths=zaloBotToken`;
+  const res = await fetch(docUrl);
+  if (!res.ok) return json({ ok: true, help: 'team-not-found' });
+  const doc = await res.json();
+  const token = doc?.fields?.zaloBotToken?.stringValue || '';
+  if (!token) return json({ ok: true, help: 'no-token' });
+
+  const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: HELP_TEXT }),
+  });
+  return json({ ok: true, help: sent.ok ? 'sent' : `zalo-${sent.status}` });
 }
 
 function s(v) {
