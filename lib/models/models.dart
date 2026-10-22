@@ -434,6 +434,50 @@ class Session {
   static String hostOf(String id) => id.split('#').first;
   static int companionIndex(String id) => int.tryParse(id.split('#').last) ?? 0;
 
+  /// Bỏ các mục nước của người đính kèm KHÔNG CÒN tồn tại (số đính kèm đã
+  /// giảm hoặc người vote đã rời danh sách chơi).
+  ///
+  /// Tiền nước của người đính kèm tính vào người vote, nên nếu không dọn thì
+  /// người vote vẫn bị trừ tiền của một người không còn đi buổi đó.
+  Session pruneCompanionDrinks() {
+    final kept = <String, Map<String, int>>{};
+    var removed = false;
+    drinks.forEach((pid, items) {
+      if (!isCompanionId(pid)) {
+        kept[pid] = items;
+        return;
+      }
+      final idx = companionIndex(pid);
+      if (idx >= 1 && idx <= companionsOf(hostOf(pid))) {
+        kept[pid] = items;
+      } else {
+        removed = true;
+      }
+    });
+    return removed ? copyWith(drinks: kept) : this;
+  }
+
+  /// Gỡ sạch dấu vết của một người khỏi buổi chơi: danh sách chơi, vote, mốc
+  /// vote, số người đính kèm, nước của họ VÀ nước của người đính kèm của họ.
+  Session withoutPlayer(String playerId) => copyWith(
+        playerIds: playerIds.where((p) => p != playerId).toList(),
+        votes: {...votes}..remove(playerId),
+        voteTimes: {...voteTimes}..remove(playerId),
+        companions: {...companions}..remove(playerId),
+        drinks: {
+          for (final e in drinks.entries)
+            if (hostOf(e.key) != playerId) e.key: e.value,
+        },
+      );
+
+  /// Người đó có để lại dấu vết gì trong buổi này không.
+  bool mentions(String playerId) =>
+      playerIds.contains(playerId) ||
+      votes.containsKey(playerId) ||
+      voteTimes.containsKey(playerId) ||
+      companions.containsKey(playerId) ||
+      drinks.keys.any((k) => hostOf(k) == playerId);
+
   /// Các id ảo của người đính kèm theo danh sách chơi.
   List<String> get companionIds => [
         for (final id in playerIds)
