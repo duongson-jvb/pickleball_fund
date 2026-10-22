@@ -1,6 +1,7 @@
 import '../models/models.dart';
 import '../utils/format.dart';
 import '../utils/text.dart';
+import 'share_service.dart';
 import 'team_store.dart';
 import 'zalo_bot_service.dart';
 import 'zalo_commands.dart';
@@ -138,6 +139,18 @@ class ZaloVoteSync {
       final inScope = u.chatId == groupId || !u.isGroup || groupId.isEmpty;
       if (!inScope || u.text.trim().isEmpty) {
         ignored++;
+        continue;
+      }
+
+      // "@bot quỹ" → bảng số dư cả nhóm (chế độ app tự hỏi Zalo; webhook đã tự trả lời).
+      if (ZaloCommands.isFund(u.text, botName: settings.zaloBotName)) {
+        ignored++;
+        if (!settings.zaloWebhookMode && settings.hasZaloBot) {
+          try {
+            await ZaloBotService.forTeam(settings, store.repo.teamId)
+                .sendMessage(u.chatId, ShareService.balanceReport(store));
+          } catch (_) {}
+        }
         continue;
       }
 

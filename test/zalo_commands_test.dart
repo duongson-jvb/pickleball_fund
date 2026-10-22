@@ -25,6 +25,14 @@ void main() {
         expect(ZaloCommands.isHelp(t), isFalse, reason: t);
       }
     });
+    test('lệnh quỹ: "quỹ", "quy", "số dư", có @bot; không nhầm với câu thường', () {
+      for (final t in ['quỹ', 'quy', 'Quỹ?', '@Bot PickleBall JVB quỹ', 'số dư', 'báo quỹ']) {
+        expect(ZaloCommands.isFund(t, botName: 'Bot PickleBall JVB'), isTrue, reason: t);
+      }
+      for (final t in ['quỹ còn bao nhiêu vậy mọi người', '1', 'nước 2', 'help']) {
+        expect(ZaloCommands.isFund(t, botName: 'Bot PickleBall JVB'), isFalse, reason: t);
+      }
+    });
     test('help không bị hiểu thành vote', () {
       expect(ZaloVoteSync.parseVote('@Bot help'), isNull);
     });

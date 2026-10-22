@@ -38,6 +38,29 @@ export default {
     const parts = url.pathname.split('/').filter(Boolean);
     const teamId = parts[0] || env.TEAM_ID || '';
 
+    // ---- Cron báo quỹ hằng tuần (Vercel Cron gọi GET /cron/weekly với Authorization: Bearer CRON_SECRET)
+    // Đường dẫn một đoạn (catch-all của Vercel không khớp nhiều đoạn): /cron-weekly
+    if ((parts[0] === 'cron-weekly' || parts[0] === 'cron') && request.method === 'GET') {
+      const authz = request.headers.get('Authorization') || '';
+      const qsSecret = url.searchParams.get('secret') || '';
+      if (env.CRON_SECRET && authz !== `Bearer ${env.CRON_SECRET}` && qsSecret !== env.CRON_SECRET) {
+        return json({ ok: false, error: 'Forbidden' }, 403);
+      }
+      const teams = String(env.TEAM_IDS || env.TEAM_ID || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const results = [];
+      for (const t of teams) results.push({ team: t, ...(await sendFundReport(env, t, null, { weekly: true })) });
+      return json({ ok: true, results });
+    }
+
+    // ---- Ảnh QR chuyển khoản (để Zalo tải về khi bot gửi ảnh): GET /<teamId>?qr=1
+    if (request.method === 'GET' && teamId && (url.searchParams.has('qr') || parts[1] === 'qr.jpg')) {
+      const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=qrImage`);
+      const b64 = team?.fields?.qrImage?.stringValue || '';
+      if (!b64) return json({ ok: false, error: 'Chưa có ảnh QR' }, 404);
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      return new Response(bin, { status: 200, headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=300', ...CORS } });
+    }
+
     if (request.method === 'GET') {
       return json({ ok: true, service: 'zalo-webhook', teamId: teamId || null });
     }
@@ -87,6 +110,14 @@ export default {
     if (isHelpCommand(text)) {
       return replyHelp(env, teamId, String(chatId));
     }
+    // "@bot quỹ" → bảng số dư cả nhóm ngay.
+    if (mayBeFundRequest(text)) {
+      const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotName`);
+      if (isFundRequest(text, team?.fields?.zaloBotName?.stringValue || '')) {
+        return json({ ok: true, fund: await sendFundReport(env, teamId, String(chatId), { weekly: false }) });
+      }
+    }
+
     // "@bot nước" (không kèm số) → trả danh sách nước kèm mã và giá ngay.
     // Phải bỏ tên bot (có dấu cách) khỏi tin nên cần đọc zaloBotName từ Firestore.
     if (mayBeDrinkListRequest(text)) {
@@ -169,14 +200,11 @@ const APP_URL = 'https://duongson-jvb.github.io/pickleball_fund/';
 
 const HELP_TEXT = [
   '🏓 Bot Quỹ Pickleball',
-  '• Vote đi chơi: Reply tin vote của bot → 1 = đi, 0 = không',
-  '• Đổi ý: reply lại là xong',
-  '• Người mới cứ reply 1, bot tự thêm tên vào danh sách',
-  '• Gõ "nước" để xem danh sách nước + mã (N1, N2...) và giá',
-  '• Ghi nước: "N1 2" / "revive 2, suối 1" / "+1 N1" (cộng thêm)',
-  '• Nhập hộ: "@An N1 2 @Bình N2 1" (nhiều người một tin)',
-  `• Xem quỹ, tiền sân, tiền nước: ${APP_URL}`,
-  '• Gõ @bot help để xem lại tin này',
+  '• Vote: reply tin vote → 1 = đi, 0 = không (đổi ý reply lại)',
+  '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
+  '• Quỹ: "quỹ" xem số dư cả nhóm',
+  '• Hỏi gì cứ @bot, em trả lời',
+  `• App: ${APP_URL}`,
 ].join('\n');
 
 /** Bỏ dấu tiếng Việt + viết thường để so khớp lệnh. */
@@ -377,7 +405,8 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
     'Bạn không tự sửa được dữ liệu quỹ; việc ghi nhận chỉ qua các lệnh sau (hướng dẫn người chơi dùng khi phù hợp):',
     '- Vote đi chơi: reply tin vote của bot với "1" (đi) hoặc "0" (không đi); đổi ý thì reply lại.',
     '- Xem danh sách nước và mã: gõ "nước". Ghi nước: "N1 2" hoặc "revive 2, suối 1"; "+1 N1" để cộng; nhập hộ: "@Tên N1 2".',
-    '- "help" để xem hướng dẫn. Số dư quỹ, tiền sân, tiền nước chi tiết: xem trong app ' + APP_URL,
+    '- Xem số dư cả nhóm: gõ "quỹ". "help" để xem hướng dẫn. Chi tiết tiền sân, tiền nước: app ' + APP_URL,
+    'Xưng "em", gọi người chơi là "anh/chị" hoặc tên. Không nhắc tới Google/Gemini/OpenAI.',
     'Chỉ dựa vào ngữ cảnh dưới đây; không biết thì nói không biết và chỉ sang app hoặc quản lý nhóm. Không bịa số liệu.',
     'Ngữ cảnh nhóm:',
     context,
@@ -387,7 +416,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
   let answer = llm.answer || '';
   if (!answer && llm.quota) {
     // Hết hạn mức miễn phí → báo vui vẻ, kèm lúc có thể hỏi lại.
-    answer = `😅 Bot hỏi hơi nhiều, hết lượt miễn phí rồi. ${llm.quota} Trong lúc chờ, các lệnh vote, ghi nước, "nước", "help" vẫn chạy bình thường nhé!`;
+    answer = `😅 Em bị hỏi hơi nhiều, hết lượt rồi. ${llm.quota} Trong lúc chờ, vote, ghi nước, "nước", "quỹ", "help" vẫn chạy bình thường nhé!`;
   }
   if (!answer) return null; // lỗi → để tin đi tiếp vào hộp thư như cũ
 
@@ -411,10 +440,10 @@ function quotaHint(retryDelay, message) {
   }
   const msg = String(message || '').toLowerCase();
   if (!secs && /(per day|daily|ngay|requests per day|generaterequestsperday)/.test(msg)) {
-    return 'Hết lượt của hôm nay, hỏi lại sau 15:00 (giờ Việt Nam) khi Google reset nhé.';
+    return 'Em hết lượt của hôm nay rồi, hỏi lại sau 15:00 (giờ Việt Nam) nhé.';
   }
   if (!secs) secs = 60;
-  if (secs >= 3600) return 'Hỏi lại sau 15:00 (giờ Việt Nam) khi Google reset lượt nhé.';
+  if (secs >= 3600) return 'Hỏi lại em sau 15:00 (giờ Việt Nam) nhé.';
   if (secs >= 120) return `Thử lại sau khoảng ${Math.ceil(secs / 60)} phút nhé.`;
   return `Thử lại sau khoảng ${Math.max(secs, 10)} giây nhé.`;
 }
@@ -448,7 +477,7 @@ async function askLLM(env, system, user) {
         }
         if (res.status === 404) { console.log('Gemini model not found', model); continue; }
         if (res.status === 503) {
-          quotaMsg = 'Google đang quá tải một chút, thử lại sau 1 phút nhé.';
+          quotaMsg = 'Em đang quá tải một chút, thử lại sau 1 phút nhé.';
           console.log('Gemini 503 high demand', model);
           continue; // thử mẫu khác
         }
@@ -489,6 +518,106 @@ async function askLLM(env, system, user) {
     }
   }
   return quotaMsg ? { quota: quotaMsg } : { error: 'unavailable' };
+}
+
+// ------------------------------------------------------------- báo quỹ
+const LOW_BALANCE = 10000; // dưới mức này → đánh dấu nạp thêm
+
+function mayBeFundRequest(text) {
+  const t = normalizeVi(text).replace(/[?!.,:;]+/g, ' ');
+  return !/\d/.test(t) && /(^|\s)(quy|so du|bao quy|tien quy)(\s|$)/.test(t);
+}
+function isFundRequest(text, botName) {
+  let t = normalizeVi(text);
+  if (botName) t = t.split(normalizeVi(botName)).join(' ');
+  t = t.replace(/@\S*/g, ' ').replace(/[?!.,:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(quy|so du|bao quy|tien quy|quy nhom|xem quy|quy team)$/.test(t);
+}
+
+async function fsList(env, path) {
+  const out = [];
+  let token = '';
+  for (let i = 0; i < 20; i++) {
+    const page = await fsGet(env, `${path}?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`);
+    if (!page) break;
+    out.push(...(page.documents || []));
+    token = page.nextPageToken || '';
+    if (!token) break;
+  }
+  return out;
+}
+
+/** Dựng bảng số dư từ players + ledger. */
+async function buildFundReport(env, teamId) {
+  const teamDoc = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=name&mask.fieldPaths=bankInfo&mask.fieldPaths=qrImage&mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloGroupId`);
+  const tf = teamDoc?.fields || {};
+  const players = (await fsList(env, `teams/${encodeURIComponent(teamId)}/players`))
+    .map((d) => ({ id: d.name.split('/').pop(), name: d.fields?.name?.stringValue || '', active: d.fields?.active?.booleanValue !== false }))
+    .filter((p) => p.active);
+  const ledger = await fsList(env, `teams/${encodeURIComponent(teamId)}/ledger`);
+  const bal = {}; let common = 0;
+  for (const d of ledger) {
+    const f = d.fields || {};
+    const amount = parseInt(f.amount?.integerValue || '0', 10) || 0;
+    const pid = f.playerId?.stringValue;
+    if (!pid) common += amount; else bal[pid] = (bal[pid] || 0) + amount;
+  }
+  const rows = players.map((p) => ({ ...p, balance: bal[p.id] || 0 })).sort((a, b) => a.balance - b.balance);
+  const low = rows.filter((r) => r.balance < LOW_BALANCE);
+  return {
+    teamName: tf.name?.stringValue || teamId,
+    bankInfo: tf.bankInfo?.stringValue || '',
+    hasQr: !!tf.qrImage?.stringValue,
+    token: tf.zaloBotToken?.stringValue || '',
+    groupId: tf.zaloGroupId?.stringValue || '',
+    rows, low, common,
+  };
+}
+
+function fundReportText(r, { weekly }) {
+  const d = new Date(Date.now() + 7 * 3600 * 1000);
+  const today = `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  const lines = [`💰 ${weekly ? 'BÁO QUỸ TUẦN' : 'QUỸ'} – ${r.teamName} (${today})`];
+  lines.push(`🏦 Quỹ chung: ${fmtVnd(r.common)}`);
+  if (!r.rows.length) lines.push('Chưa có người chơi nào.');
+  for (const x of r.rows) lines.push(`• ${x.name}: ${fmtVnd(x.balance)}${x.balance < LOW_BALANCE ? ' ⚠️ nạp thêm' : ''}`);
+  if (r.low.length) {
+    lines.push(`⚠️ ${r.low.length} bạn dưới ${fmtVnd(LOW_BALANCE)}: ${r.low.map((x) => x.name).join(', ')} – nạp quỹ giúp em nhé!`);
+    if (r.bankInfo) lines.push(`🏦 ${r.bankInfo}`);
+  } else if (weekly) {
+    lines.push('✅ Ai cũng còn quỹ, tuần này êm!');
+  }
+  return lines.join('\n');
+}
+
+/** Gửi báo quỹ vào chat (chatId) hoặc nhóm mặc định; kèm ảnh QR nếu có người sắp hết quỹ. */
+async function sendFundReport(env, teamId, chatId, { weekly }) {
+  const r = await buildFundReport(env, teamId);
+  const target = chatId || r.groupId;
+  if (!r.token) return { status: 'no-token' };
+  if (!target) return { status: 'no-group' };
+  const text = fundReportText(r, { weekly });
+  const sent = await fetch(`${ZALO_API}/bot${r.token}/sendMessage`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: target, text: text.slice(0, 2000) }),
+  });
+  let zalo = {};
+  try { zalo = await sent.json(); } catch { /* bỏ qua */ }
+  const out = { status: zalo?.ok === true ? 'sent' : `failed ${zalo?.description || ''}`, low: r.low.length, players: r.rows.length };
+  // Có người sắp hết quỹ và có ảnh QR → gửi kèm QR (Zalo tải ảnh qua URL công khai của webhook).
+  if (r.low.length && r.hasQr) {
+    const photoUrl = `${env.PUBLIC_BASE_URL || 'https://pickleball-zalo-webhook.vercel.app'}/${encodeURIComponent(teamId)}?qr=1&v=${Date.now()}`;
+    const ph = await fetch(`${ZALO_API}/bot${r.token}/sendPhoto`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: target, photo: photoUrl, caption: '📷 QR chuyển khoản nộp quỹ' }),
+    });
+    let pz = {};
+    try { pz = await ph.json(); } catch { /* bỏ qua */ }
+    out.qr = pz?.ok === true ? 'sent' : `failed ${pz?.description || ''}`;
+    console.log('QR photo', out.qr);
+  }
+  console.log(`fund report → ${target}: ${out.status} (${out.players} người, ${out.low} sắp hết)`);
+  return out;
 }
 
 function isHelpCommand(text) {
