@@ -1,10 +1,63 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Ứng dụng nội bộ của team: dữ liệu nằm dưới teams/{teamId}.
-    // teamId đóng vai trò như "mật khẩu" của nhóm (chỉ ai biết mã nhóm mới truy cập được).
-    match /teams/{teamId}/{document=**} {
-      allow read, write: if teamId.size() >= 6;
+
+    // Mã nhóm (teamId) đóng vai trò "mật khẩu xem": ai biết mã thì xem và vote.
+    // Mọi sửa đổi khác cần đăng nhập bằng tài khoản quản trị của nhóm
+    // (email tổng hợp + mã bảo mật), uid được lưu ở teams/{teamId}.adminUid.
+
+    function validTeam(teamId) {
+      return teamId.size() >= 6;
+    }
+
+    function teamData(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data;
+    }
+
+    function isAdmin(teamId) {
+      let t = teamData(teamId);
+      return request.auth != null && ('adminUid' in t) && t.adminUid == request.auth.uid;
+    }
+
+    match /teams/{teamId} {
+      allow read: if validTeam(teamId);
+
+      // Tạo nhóm mới: cần đăng nhập (ẩn danh cũng được).
+      allow create: if validTeam(teamId) && request.auth != null;
+
+      // Sửa thông tin nhóm:
+      //  - quản trị viên; hoặc
+      //  - nhóm CHƯA có quản trị viên và người đăng nhập tự nhận quyền (đặt mã lần đầu).
+      allow update: if validTeam(teamId) && request.auth != null && (
+        (('adminUid' in resource.data) && resource.data.adminUid == request.auth.uid)
+        || (!('adminUid' in resource.data) && request.resource.data.adminUid == request.auth.uid)
+      );
+      allow delete: if false;
+
+      match /sessions/{sessionId} {
+        allow read: if validTeam(teamId);
+        allow create, delete: if isAdmin(teamId);
+        // Quản trị sửa tất cả; người thường (đã đăng nhập ẩn danh) chỉ được
+        // đổi trường votes của buổi đang mở vote.
+        allow update: if isAdmin(teamId) || (
+          request.auth != null
+          && resource.data.status == 'voting'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes'])
+        );
+      }
+
+      match /zaloInbox/{messageId} {
+        allow read: if validTeam(teamId);
+        // Webhook trên Vercel ghi vào đây bằng REST không đăng nhập.
+        allow create: if validTeam(teamId);
+        allow update, delete: if isAdmin(teamId);
+      }
+
+      // players, ledger, drinkTypes, expenses
+      match /{collection}/{docId} {
+        allow read: if validTeam(teamId);
+        allow write: if isAdmin(teamId);
+      }
     }
   }
 }

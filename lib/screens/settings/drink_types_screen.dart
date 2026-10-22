@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/models.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 
 /// Quản lý loại nước và lịch sử giá theo ngày.
@@ -10,6 +11,7 @@ class DrinkTypesScreen extends StatelessWidget {
   const DrinkTypesScreen({super.key});
 
   Future<void> _add(BuildContext context) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final name = TextEditingController();
     final price = TextEditingController();
@@ -104,6 +106,7 @@ class DrinkTypeDetailScreen extends StatelessWidget {
   final String typeId;
 
   Future<void> _setPrice(BuildContext context, DrinkType t, {DrinkPrice? existing}) async {
+    if (!await requireAdmin(context) || !context.mounted) return;
     final store = TeamScope.of(context);
     final price = TextEditingController(text: existing?.price.toString() ?? '');
     var date = existing?.date ?? DateTime.now();

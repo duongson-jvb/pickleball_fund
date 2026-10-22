@@ -25,7 +25,16 @@ Chạy được trên iOS, Android và Web (bản web được deploy tự độ
 2. Vào **Cài đặt → Loại nước & giá** để tạo các loại nước.
 3. Thêm người chơi, nộp quỹ, tạo buổi chơi.
 
-Mã nhóm hoạt động như mật khẩu của nhóm: chỉ ai biết mã mới xem / sửa được dữ liệu (xem `firestore.rules`).
+## Phân quyền
+
+- **Mã nhóm**: ai biết mã thì **xem** toàn bộ và **vote** đi/không đi. App tự đăng nhập ẩn danh (Firebase Auth).
+- **Mã bảo mật quản trị**: mọi sửa đổi khác (người chơi, nộp quỹ, quỹ chung, buổi chơi, tiền sân/nước, chi phí, cài đặt, Zalo Bot)
+  cần mở khoá bằng mã này (biểu tượng ổ khoá ở Tổng quan hoặc Cài đặt → Mã bảo mật quản trị).
+  Lần đầu, người đặt mã trở thành quản trị viên; có thể đổi mã, khoá lại trên máy.
+- Kỹ thuật: mã bảo mật là mật khẩu của tài khoản Firebase Auth tổng hợp `admin-<mã nhóm>@team.pickleball.app`;
+  `teams/{teamId}.adminUid` lưu uid đó và **Firestore rules** chỉ cho uid này ghi (xem `firestore.rules`).
+  Người thường chỉ được đổi trường `votes` của buổi đang mở vote; webhook Vercel chỉ được tạo tin trong `zaloInbox`.
+- Việc xử lý hộp thư Zalo (tạo người chơi, ghi vote) chỉ chạy trên máy đang mở khoá quản trị.
 
 ## Chạy dự án
 

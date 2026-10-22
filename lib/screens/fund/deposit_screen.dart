@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 
 /// Nộp quỹ: cho một người, hoặc cho tất cả (chia đều theo đầu người).
@@ -31,6 +32,7 @@ class _DepositScreenState extends State<DepositScreen> {
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
+    if (!await requireAdmin(context) || !mounted) return;
     final store = TeamScope.of(context);
     final amount = parseAmount(_amount.text);
     if (!_forAll && _playerId == null) {

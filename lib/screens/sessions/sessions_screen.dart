@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/models.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
+import '../../widgets/admin_gate.dart';
 import '../../widgets/common.dart';
 import 'session_detail_screen.dart';
 import 'session_form_screen.dart';
@@ -19,8 +20,11 @@ class SessionsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Buổi chơi')),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'fab-sessions',
-        onPressed: () => Navigator.push(
-            context, MaterialPageRoute(builder: (_) => const SessionFormScreen())),
+        onPressed: () async {
+          if (!await requireAdmin(context) || !context.mounted) return;
+          Navigator.push(
+              context, MaterialPageRoute(builder: (_) => const SessionFormScreen()));
+        },
         icon: const Icon(Icons.add),
         label: const Text('Tạo buổi / vote'),
       ),

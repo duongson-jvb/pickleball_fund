@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../services/share_service.dart';
 import '../services/team_store.dart';
 import '../utils/format.dart';
+import '../widgets/admin_gate.dart';
 import '../widgets/common.dart';
 import 'fund/common_fund_screen.dart';
 import 'fund/deposit_screen.dart';
@@ -24,6 +25,7 @@ class DashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: Text(store.settings.name),
         actions: [
+          const AdminLockButton(),
           IconButton(
             tooltip: 'Chia sẻ lên Zalo',
             icon: const Icon(Icons.share),
@@ -35,6 +37,18 @@ class DashboardScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          if (!store.settings.hasAdmin)
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.lock_person_outlined),
+                title: const Text('Chưa đặt mã bảo mật quản trị'),
+                subtitle: const Text(
+                    'Hiện chưa ai sửa được dữ liệu. Đặt mã để bạn thành quản trị viên; người khác vẫn xem và vote.'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => setupAdminPin(context),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: Row(

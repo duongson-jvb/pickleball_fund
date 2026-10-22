@@ -97,6 +97,13 @@ class TeamRepository {
   Future<void> updateSettings(Map<String, dynamic> data) =>
       teamDoc.set(data, SetOptions(merge: true));
 
+  /// Ghi uid tài khoản quản trị vào nhóm (đặt mã bảo mật lần đầu).
+  Future<void> claimAdmin(String uid) => teamDoc.set({'adminUid': uid}, SetOptions(merge: true));
+
+  /// Người thường (không phải quản trị) chỉ được đổi vote của buổi đang mở vote.
+  Future<void> setVote(String sessionId, String playerId, bool vote) =>
+      sessions.doc(sessionId).update({'votes.$playerId': vote});
+
   // ---------------------------------------------------------------- players
   Future<void> addPlayer(String name, {String phone = '', String note = ''}) =>
       players.add({

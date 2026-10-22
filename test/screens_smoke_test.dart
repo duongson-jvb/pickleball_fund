@@ -133,6 +133,8 @@ void main() {
 
       await tester.tap(find.text('Cài đặt'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Zalo Bot (vote tự động)'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Zalo Bot (vote tự động)'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
