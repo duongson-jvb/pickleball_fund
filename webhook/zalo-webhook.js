@@ -198,7 +198,15 @@ async function replyHelp(env, teamId, chatId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text: HELP_TEXT }),
   });
-  return json({ ok: true, help: sent.ok ? 'sent' : `zalo-${sent.status}` });
+  let zalo = {};
+  try { zalo = await sent.json(); } catch { /* bỏ qua */ }
+  const okSend = sent.ok && zalo?.ok === true;
+  console.log(`help → chat ${chatId}: ${okSend ? 'sent' : 'failed'} ${zalo?.description || ''}`);
+  return json({
+    ok: true,
+    help: okSend ? 'sent' : 'failed',
+    zalo: okSend ? { message_id: zalo?.result?.message_id } : { error_code: zalo?.error_code, description: zalo?.description },
+  });
 }
 
 function s(v) {
