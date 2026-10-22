@@ -71,10 +71,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         if (base == null) return;
         final next = update(base);
         _optimistic = next;
-        await store.repo.saveAndSettleSession(
-          next,
-          commonFundExcludingThis: store.commonFundExcluding(next.id),
-        );
+        await store.repo.saveAndSettleSession(next);
       } catch (e) {
         if (mounted) showSnack(context, 'Lỗi lưu: $e');
       } finally {

@@ -60,11 +60,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         note: _note.text.trim(),
         createdAt: widget.expense?.createdAt ?? DateTime.now(),
       );
-      await store.repo.saveAndSettleExpense(
-        expense,
-        allActivePlayerIds: store.activePlayers.map((p) => p.id).toList(),
-        commonFundExcludingThis: id.isEmpty ? store.commonFund : store.commonFundExcluding(id),
-      );
+      await store.repo.saveAndSettleExpense(expense);
       if (mounted) Navigator.pop(context);
     } finally {
       if (mounted) setState(() => _busy = false);

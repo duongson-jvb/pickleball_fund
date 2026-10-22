@@ -28,3 +28,12 @@ String normalizeVi(String s) {
   }
   return out.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
+
+/// [haystack] có chứa [needle] như một cụm từ TRỌN VẸN không (cả hai đã
+/// chuẩn hoá bằng [normalizeVi]). Dùng để khớp tên người chơi: "An" không
+/// được khớp vào "Hoàng", "Lan" hay "bạn".
+bool containsWholeWord(String haystack, String needle) {
+  if (needle.isEmpty || haystack.isEmpty) return false;
+  return RegExp('(^|[^a-z0-9])${RegExp.escape(needle)}([^a-z0-9]|\$)')
+      .hasMatch(haystack);
+}

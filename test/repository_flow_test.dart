@@ -110,7 +110,7 @@ void main() {
       final sid = await repo.createSession(newSession(id: '', courtFee: 400000));
       await settle();
       var s = store.sessions.single.copyWith(playerIds: [ids['An']!, ids['Bình']!]);
-      await repo.saveAndSettleSession(s, commonFundExcludingThis: store.commonFundExcluding(sid));
+      await repo.saveAndSettleSession(s);
       await settle();
 
       // 400k, 2 người → quỹ chung trả 100k, còn 300k chia đôi.
@@ -121,7 +121,7 @@ void main() {
 
       // Thêm 2 người nữa (không vote nhưng vẫn đi) → tính lại, không ghi trùng.
       s = store.sessions.single.copyWith(playerIds: ids.values.toList());
-      await repo.saveAndSettleSession(s, commonFundExcludingThis: store.commonFundExcluding(sid));
+      await repo.saveAndSettleSession(s);
       await settle();
       expect(store.commonFund, 0);
       for (final id in ids.values) {
@@ -144,7 +144,7 @@ void main() {
           newSession(id: '', courtFee: 300000, players: ids.values.toList()));
       await settle();
       final s = store.sessions.single.copyWith(guestCount: 1);
-      await repo.saveAndSettleSession(s, commonFundExcludingThis: 0);
+      await repo.saveAndSettleSession(s);
       await settle();
       final st = store.sessions.single.settlement;
       expect(st.perHead, 100000);
@@ -171,7 +171,7 @@ void main() {
       final s = store.sessions.single.copyWith(drinks: {
         ids['An']!: {revive.id: 2},
       });
-      await repo.saveAndSettleSession(s, commonFundExcludingThis: 0);
+      await repo.saveAndSettleSession(s);
       await settle();
       expect(store.balanceOf(ids['An']!), -30000);
       expect(store.balanceOf(ids['Bình']!), 0);
@@ -179,7 +179,7 @@ void main() {
 
       // Sửa giá riêng của buổi → tính lại.
       final s2 = store.sessions.single.copyWith(drinkPrices: {revive.id: 20000});
-      await repo.saveAndSettleSession(s2, commonFundExcludingThis: 0);
+      await repo.saveAndSettleSession(s2);
       await settle();
       expect(store.balanceOf(ids['An']!), -40000);
       expect(store.ledger.where((e) => e.refId == sid && e.type == LedgerType.drink).length, 1);
@@ -195,7 +195,7 @@ void main() {
       // 5 lần lưu gần như cùng lúc (giống bấm +1 liên tục).
       await Future.wait([
         for (var i = 1; i <= 5; i++)
-          repo.saveAndSettleSession(base.copyWith(guestCount: i), commonFundExcludingThis: 0),
+          repo.saveAndSettleSession(base.copyWith(guestCount: i)),
       ]);
       await settle();
       expect(store.ledger.where((e) => e.refId == sid).length, 2);
@@ -212,8 +212,6 @@ void main() {
 
       await repo.saveAndSettleExpense(
         Expense(id: '', title: 'Mua bóng', amount: 200000, date: DateTime(2026), createdAt: DateTime(2026)),
-        allActivePlayerIds: ids.values.toList(),
-        commonFundExcludingThis: store.commonFund,
       );
       await settle();
       expect(store.commonFund, 0);
@@ -224,8 +222,6 @@ void main() {
         Expense(
             id: '', title: 'Áo', amount: 300000, playerIds: [ids['An']!, ids['Bình']!],
             date: DateTime(2026), createdAt: DateTime(2026)),
-        allActivePlayerIds: ids.values.toList(),
-        commonFundExcludingThis: store.commonFund,
       );
       await settle();
       expect(store.balanceOf(ids['An']!), -200000);
@@ -233,9 +229,7 @@ void main() {
 
       // Sửa chi phí → tính lại, xoá chi phí → hoàn tiền.
       final e = store.expenses.firstWhere((x) => x.title == 'Áo');
-      await repo.saveAndSettleExpense(e.copyWith(amount: 100000),
-          allActivePlayerIds: ids.values.toList(),
-          commonFundExcludingThis: store.commonFundExcluding(e.id));
+      await repo.saveAndSettleExpense(e.copyWith(amount: 100000));
       await settle();
       expect(store.balanceOf(ids['An']!), -100000);
       await repo.deleteExpense(e.id);
