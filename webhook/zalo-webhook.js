@@ -361,7 +361,17 @@ async function maybeChatReply(env, teamId, chatId, text, fromName) {
   if (kind === 'empty') return json({ ok: true, ignored: 'empty-mention' });
   if (kind === 'command') return null;
 
-  const context = await buildContext(env, teamId, tf.name?.stringValue || '');
+  const work = chatReplyWork(env, teamId, chatId, text, fromName, token, botName, tf.name?.stringValue || '');
+  if (typeof env.waitUntil === 'function') {
+    // Zalo chờ phản hồi ngắn; AI có thể mất 10–30 giây → trả lời Zalo ngay, xử lý nền.
+    env.waitUntil(work.catch((e) => console.log('chat work failed', String(e))));
+    return json({ ok: true, chat: 'queued' });
+  }
+  return work;
+}
+
+async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName, teamName) {
+  const context = await buildContext(env, teamId, teamName);
   const system = [
     `Bạn là "${botName || 'Bot'}", trợ lý trong nhóm chat Zalo của một team pickleball, trả lời bằng tiếng Việt, thân thiện, NGẮN GỌN (tối đa 3 câu, không markdown).`,
     'Bạn không tự sửa được dữ liệu quỹ; việc ghi nhận chỉ qua các lệnh sau (hướng dẫn người chơi dùng khi phù hợp):',
@@ -388,6 +398,7 @@ async function maybeChatReply(env, teamId, chatId, text, fromName) {
   });
   let zalo = {};
   try { zalo = await sent.json(); } catch { /* bỏ qua */ }
+  console.log(`chat → ${chatId}: ${zalo?.ok === true ? 'sent' : 'failed ' + (zalo?.description || '')} | q="${text.slice(0, 60)}" | a="${answer.slice(0, 80)}"`);
   return json({ ok: true, chat: zalo?.ok === true ? 'sent' : 'failed' });
 }
 
@@ -415,7 +426,7 @@ function quotaHint(retryDelay, message) {
 async function askLLM(env, system, user) {
   let quotaMsg = null;
   if (env.GEMINI_API_KEY) {
-    const models = [env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'].filter(Boolean);
+    const models = [...new Set([env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'].filter(Boolean))];
     for (const model of models) {
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`, {
@@ -424,7 +435,7 @@ async function askLLM(env, system, user) {
           body: JSON.stringify({
             system_instruction: { parts: [{ text: system }] },
             contents: [{ role: 'user', parts: [{ text: user }] }],
-            generationConfig: { temperature: 0.4, maxOutputTokens: 300 },
+            generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
           }),
         });
         const data = await res.json();
@@ -436,6 +447,11 @@ async function askLLM(env, system, user) {
           return { error: 'empty' };
         }
         if (res.status === 404) { console.log('Gemini model not found', model); continue; }
+        if (res.status === 503) {
+          quotaMsg = 'Google đang quá tải một chút, thử lại sau 1 phút nhé.';
+          console.log('Gemini 503 high demand', model);
+          continue; // thử mẫu khác
+        }
         if (res.status === 429) {
           const details = data?.error?.details || [];
           const retry = details.find((d) => d.retryDelay)?.retryDelay;

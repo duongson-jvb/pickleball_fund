@@ -2,5 +2,8 @@
   "name": "pickleball-zalo-webhook",
   "private": true,
   "type": "module",
-  "description": "Webhook/proxy Zalo Bot cho app Quỹ Pickleball (Vercel Function dùng chung code worker/)"
+  "description": "Webhook/proxy Zalo Bot cho app Quỹ Pickleball (Vercel Function dùng code webhook/)",
+  "dependencies": {
+    "@vercel/functions": "^2.0.0"
+  }
 }
