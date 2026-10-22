@@ -92,6 +92,8 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
    Mã/tên không phân biệt hoa thường, có dấu hay không dấu.
    **Nhập hộ**: `@An N1 2 @Nguyễn Văn Bình N2 1, N1 1` — mỗi người sau dấu @ được ghi riêng, nhiều người trong một tin;
    phần trước dấu @ đầu tiên (nếu có) là của chính người gửi. Tên khớp dài nhất với danh sách, viết tắt duy nhất cũng được.
+7. **Hỏi đáp bằng AI**: tin không phải vote hay lệnh (câu hỏi, trò chuyện) được **Gemini** (miễn phí) trả lời ngay tại webhook,
+   biết lịch buổi sắp tới, bảng giá nước, các lệnh bot. Hết hạn mức thì bot báo vui vẻ kèm lúc hỏi lại được. Xem `webhook/README.md`.
    App ghi vào buổi gần nhất người đó tham gia (36 giờ trước → 6 giờ sau giờ chơi), tính lại tiền và bot trả lời xác nhận
    kèm tổng tiền nước. Người chưa có trong danh sách hoặc không tìm thấy buổi thì bot báo để quản lý xử lý.
 

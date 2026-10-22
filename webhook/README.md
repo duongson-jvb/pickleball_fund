@@ -14,8 +14,17 @@ Cả hai đường POST đều yêu cầu header `X-Bot-Api-Secret-Token` = bi�
 ## Luồng
 
 1. Thành viên reply tin của bot hoặc @bot trong nhóm → Zalo POST tới webhook.
-2. Lệnh `help` / `hướng dẫn` / `?` → hàm đọc token bot của nhóm từ Firestore và trả lời ngay.
-3. Tin khác → ghi vào Firestore `teams/{mã nhóm}/zaloInbox/{messageId}` → app đọc và biến thành vote.
+2. Lệnh `help` / `hướng dẫn` / `?` → trả lời ngay. `nước` → danh sách nước kèm mã và giá.
+3. Tin là vote (ngắn, có từ khoá 1/0/đi/không...) hoặc lệnh nước (có chữ số) → ghi vào
+   `teams/{mã nhóm}/zaloInbox/{messageId}` → app (máy quản trị) xử lý.
+4. Tin khác (câu hỏi có dấu "?", từ để hỏi, hoặc câu dài) → **AI trả lời ngay**:
+   - Ưu tiên **Google Gemini** (miễn phí, không cần thẻ): biến `GEMINI_API_KEY`, lấy tại https://aistudio.google.com/apikey.
+     Mẫu mặc định `gemini-2.5-flash`, tự lùi về `gemini-2.0-flash` / `gemini-1.5-flash` nếu không có; đổi bằng `GEMINI_MODEL`.
+   - Dự phòng **OpenAI** nếu đặt `OPENAI_API_KEY` (có phí; mẫu `OPENAI_MODEL`, mặc định `gpt-4o-mini`).
+   - Bot được cấp ngữ cảnh: tên nhóm, buổi sắp tới (giờ, sân, số vote, hạn, tiền sân, người tạo), buổi gần nhất,
+     bảng giá nước, các lệnh; trả lời tiếng Việt tối đa 3 câu, không bịa số liệu, không sửa được dữ liệu.
+   - **Hết hạn mức**: bot báo vui vẻ kèm thời gian hỏi lại (lấy từ `retryDelay` của Google; hết lượt ngày thì
+     "hỏi lại sau 15:00 giờ Việt Nam"). Không có key hoặc AI lỗi → tin đi vào hộp thư như cũ.
 
 ## Deploy / cập nhật
 
