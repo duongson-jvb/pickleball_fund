@@ -115,8 +115,8 @@ class ZaloVoteSync {
   }
 
   static String _numberError(String original) =>
-      '🤔 Em chưa hiểu "${original.trim()}". Reply "0" = không đi, "1" = đi, '
-      '"2" = đi 2 người (kèm 1)... tối đa "$maxVoteSeats".';
+      '🙏 Dạ em chưa hiểu "${original.trim()}" ạ.\nAnh/chị reply giúp em: 0 = không đi · 1 = đi · '
+      '2 = đi 2 người (kèm 1) · tối đa $maxVoteSeats ạ.';
 
   /// Hiểu nội dung reply: true = đi, false = không đi, null = không rõ.
   /// [botName] để bỏ phần @mention bot trước khi phân tích.
@@ -660,7 +660,7 @@ class ZaloVoteSync {
 
   /// Câu báo khi có người vote lúc chưa có buổi nào đang mở vote.
   static const noOpenVoteText =
-      '📭 Hiện chưa có buổi nào đang mở vote. Chờ quản lý tạo buổi rồi vote nhé!';
+      '📭 Dạ hiện chưa có buổi nào đang mở vote ạ.\nAnh/chị chờ quản lý tạo buổi rồi vote giúp em nhé ạ.';
 
   /// Trả lời người gửi trong chat Zalo. Ở chế độ webhook thì webhook đã trả
   /// lời ngay rồi, app không nhắn lại nữa cho khỏi trùng.

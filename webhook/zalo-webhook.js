@@ -420,10 +420,10 @@ function escapeRe(x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 const MAX_VOTE_SEATS = 4;
 
 const NO_OPEN_VOTE_TEXT =
-  '📭 Chưa có buổi nào đang mở vote\nChờ quản lý tạo buổi rồi vote nhé!';
+  '📭 Dạ hiện chưa có buổi nào đang mở vote ạ.\nAnh/chị chờ quản lý tạo buổi rồi vote giúp em nhé ạ.';
 
 function voteNumberErrorText(original) {
-  return `🤔 Em chưa hiểu "${String(original).trim()}"\nReply: 0 = không đi · 1 = đi · 2 = đi 2 người (kèm 1) · tối đa ${MAX_VOTE_SEATS}`;
+  return `🙏 Dạ em chưa hiểu "${String(original).trim()}" ạ.\nAnh/chị reply giúp em: 0 = không đi · 1 = đi · 2 = đi 2 người (kèm 1) · tối đa ${MAX_VOTE_SEATS} ạ.`;
 }
 
 /**
@@ -525,8 +525,8 @@ async function openVoteSession(env, teamId) {
 }
 
 // ----------------------------------------------------- ghi vote trực tiếp
-const EMPTY_MENTION_TEXT = '👋 Em đây!\n"help" cách dùng · "vote" buổi đang mở · "nước" giá nước · "quỹ" số dư';
-const FALLBACK_TEXT = '😅 Em chưa hiểu ý anh/chị\nGõ "help" để xem các lệnh, hoặc hỏi lại em bằng câu khác nhé.';
+const EMPTY_MENTION_TEXT = '👋 Dạ em đây ạ!\nAnh/chị gõ giúp em: "help" xem cách dùng · "vote" buổi đang mở · "nước" giá nước · "quỹ" số dư ạ.';
+const FALLBACK_TEXT = '🙏 Dạ em xin lỗi, em chưa hiểu ý anh/chị ạ.\nAnh/chị gõ "help" để xem các lệnh, hoặc hỏi lại em bằng câu khác giúp em ạ.';
 
 /** Token đăng nhập (ẩn danh) để webhook ghi vote vào Firestore theo rules. */
 /**
@@ -625,7 +625,7 @@ function readVoteValue(text, botName) {
 }
 
 function expiredText(open) {
-  return `⏰ Hết hạn vote · ${open.title || 'buổi chơi'}\nHạn vote là ${fmtDateTime(open.deadline)}, vote này không được tính. Cần thêm thì báo quản lý nhé!`;
+  return `⏰ Dạ buổi ${open.title || 'chơi'} đã hết hạn vote lúc ${fmtDateTime(open.deadline)} ạ.\nEm xin phép không tính vote này. Anh/chị cần thêm chỗ thì nhắn quản lý giúp em nhé ạ.`;
 }
 
 function fieldSeg(pid) {
@@ -1089,13 +1089,15 @@ async function maybeChatReply(env, teamId, chatId, text, fromName, quote = '') {
 async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName, teamName, quote = '') {
   const context = await buildContext(env, teamId, teamName);
   const system = [
-    `Bạn là "${botName || 'Bot'}", trợ lý trong nhóm chat Zalo của một team pickleball, trả lời bằng tiếng Việt, thân thiện, NGẮN GỌN (tối đa 3 câu, không markdown).`,
+    `Bạn là "${botName || 'Bot'}", em út giúp việc trong nhóm chat Zalo của một team pickleball. Trả lời bằng tiếng Việt, NGẮN GỌN (tối đa 3 câu, không markdown).`,
+    'PHONG CÁCH BẮT BUỘC: lịch sự, lễ phép, khiêm tốn như em nhỏ nói với anh chị lớn tuổi. Luôn xưng "em", gọi người hỏi là "anh/chị" (hoặc "anh Tên"/"chị Tên" nếu biết tên). Mở đầu bằng "Dạ" và kết câu bằng "ạ" khi hợp ngữ cảnh. Dùng "giúp em", "nhờ anh/chị", "em xin phép", "em cảm ơn ạ". Tuyệt đối không nói trống không, không ra lệnh ("làm đi", "gõ đi"), không trêu chọc, không mỉa mai, không nói tục, không dùng từ suồng sã ("ok", "ờ", "ừ", "nhé" đứng một mình). Khi không làm được hoặc không biết thì xin lỗi nhẹ nhàng rồi chỉ cách khác. Khi bị trách thì nhận lỗi, không cãi.',
     'Bạn không tự sửa được dữ liệu quỹ; việc ghi nhận chỉ qua các lệnh sau (hướng dẫn người chơi dùng khi phù hợp):',
     '- Vote đi chơi: reply tin vote của bot với "1" (đi), "2" (đi 2 người, kèm 1 người đính kèm, tiền tính vào người vote) hoặc "0" (không đi); đổi ý thì reply lại. Vote hộ người khác: "@Tên 1" hoặc "@Tên 0", nhiều người trong một tin.',
     '- Xem danh sách nước và mã: gõ "nước". Ghi nước: "N1 2" hoặc "revive 2, suối 1"; "+1 N1" để cộng; nhập hộ: "@Tên N1 2".',
     '- Xem số dư cả nhóm: gõ "quỹ". "help" để xem hướng dẫn. Chi tiết tiền sân, tiền nước: app ' + APP_URL,
-    'Xưng "em", gọi người chơi là "anh/chị" hoặc tên. Không bao giờ nhắc mình là AI/mô hình nào (Google, Gemini, OpenAI, Groq, Llama, Qwen...); trả lời như một thành viên của nhóm.',
-    'Chỉ dựa vào ngữ cảnh dưới đây; không biết thì nói không biết và chỉ sang app hoặc quản lý nhóm. Không bịa số liệu.',
+    'Không bao giờ nhắc mình là AI/mô hình nào (Google, Gemini, OpenAI, Groq, Llama, Qwen...); trả lời như một thành viên nhỏ tuổi của nhóm.',
+    'Chỉ dựa vào ngữ cảnh dưới đây; không biết thì nói "dạ em chưa rõ" và xin phép chỉ sang app hoặc nhờ quản lý nhóm. Không bịa số liệu.',
+    'Ví dụ giọng điệu đúng: "Dạ anh Tùng ơi, buổi Thứ 7 hiện có 6/8 suất ạ. Anh reply 1 giúp em để em ghi tên anh nhé ạ." / "Dạ em xin lỗi, phần này em chưa có số liệu ạ. Anh chị xem giúp em trong app hoặc hỏi quản lý nhóm ạ."',
     'Ngữ cảnh nhóm:',
     context,
   ].join('\n');
@@ -1104,7 +1106,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
   let answer = llm.answer || '';
   if (!answer && llm.quota) {
     // Hết hạn mức miễn phí → báo vui vẻ, kèm lúc có thể hỏi lại.
-    answer = `😅 Em bị hỏi hơi nhiều, hết lượt rồi. ${llm.quota} Trong lúc chờ, vote, ghi nước, "nước", "quỹ", "help" vẫn chạy bình thường nhé!`;
+    answer = `🙏 Dạ em xin lỗi anh/chị, hôm nay em được hỏi hơi nhiều nên tạm hết lượt trả lời ạ. ${llm.quota} Trong lúc chờ, vote, ghi nước, "nước", "quỹ", "help" vẫn chạy bình thường ạ.`;
   }
   if (!answer) answer = FALLBACK_TEXT; // AI lỗi vẫn phải trả lời người hỏi
   if (quote) answer = `${quote}\n\n${answer}`;
@@ -1129,12 +1131,12 @@ function quotaHint(retryDelay, message) {
   }
   const msg = String(message || '').toLowerCase();
   if (!secs && /(per day|daily|ngay|requests per day|generaterequestsperday)/.test(msg)) {
-    return 'Em hết lượt của hôm nay rồi, hỏi lại sau 15:00 (giờ Việt Nam) nhé.';
+    return 'Anh/chị hỏi lại em sau 15:00 (giờ Việt Nam) giúp em ạ.';
   }
   if (!secs) secs = 60;
-  if (secs >= 3600) return 'Hỏi lại em sau 15:00 (giờ Việt Nam) nhé.';
-  if (secs >= 120) return `Thử lại sau khoảng ${Math.ceil(secs / 60)} phút nhé.`;
-  return `Thử lại sau khoảng ${Math.max(secs, 10)} giây nhé.`;
+  if (secs >= 3600) return 'Anh/chị hỏi lại em sau 15:00 (giờ Việt Nam) giúp em ạ.';
+  if (secs >= 120) return `Anh/chị thử lại giúp em sau khoảng ${Math.ceil(secs / 60)} phút ạ.`;
+  return `Anh/chị thử lại giúp em sau khoảng ${Math.max(secs, 10)} giây ạ.`;
 }
 
 /**
@@ -1215,7 +1217,7 @@ async function askLLM(env, system, user) {
           console.log('Gemini quota', model, data?.error?.message, retry);
           continue; // mẫu khác còn hạn mức riêng
         }
-        if (res.status === 503) quotaMsg = quotaMsg || 'Em đang quá tải một chút, thử lại sau 1 phút nhé.';
+        if (res.status === 503) quotaMsg = quotaMsg || 'Dạ em đang hơi quá tải, anh/chị thử lại giúp em sau 1 phút ạ.';
         console.log('Gemini error', model, res.status, JSON.stringify(data).slice(0, 200));
         continue;
       } catch (e) {

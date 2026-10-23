@@ -156,7 +156,7 @@ await check('vote hộ + tự vote "1 @An 0"', { text: '1 @An 0', from: TUNG }, 
 await check('vote hộ theo tên hiển thị Zalo đã nhớ "@Binh Dep Trai 1"', { text: '@Binh Dep Trai 1', from: TUNG }, { reply: '✅ Bình ĐI', patched: true });
 await check('vote hộ tên dài chứa tên app "@Nguyễn Văn An 0"', { text: '@Nguyễn Văn An 0', from: TUNG }, { reply: '👌 An KHÔNG ĐI', patched: true });
 await check('vote hộ tên lạ', { text: '@Người Lạ 1', from: TUNG }, { reply: 'Không tìm thấy người chơi "nguoi la"' });
-await check('vote hộ số sai "@An 10"', { text: '@An 10', from: TUNG }, { reply: 'Em chưa hiểu' });
+await check('vote hộ số sai "@An 10"', { text: '@An 10', from: TUNG }, { reply: 'em chưa hiểu' });
 await check('vote hộ vượt chỗ "@An 3" (còn 2)', { text: '@An 3', from: TUNG }, { reply: 'Còn 2/4 chỗ' });
 await check('"@An đi không?" là câu hỏi → AI', { text: '@An đi không?', from: TUNG }, { reply: 'Dạ em đây' });
 await check('"@An đi nhé" ngắn có từ khoá nhưng nói với người khác → AI', { text: '@An đi nhé', from: TUNG }, { reply: 'Dạ em đây' });
@@ -166,8 +166,8 @@ if (!(px3.saved.length === 1 && px3.saved[0] === '1')) { fails++; log.push(`SAI 
 if (!px3.sent.join('\n').includes('chưa có trong danh sách')) { fails++; log.push('SAI  phải báo người gửi chưa có tên'); }
 await check('khớp theo tên hiển thị', { text: '1', from: { id: 'z9', display_name: 'Tùng' } }, { reply: '✅ Tùng ĐI', patched: true });
 await check('người lạ vote → hộp thư + báo', { text: '1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: 'chưa có trong danh sách', inbox: true });
-await check('số sai "10"', { text: '10' }, { reply: 'Em chưa hiểu' });
-await check('số sai "1,2,3"', { text: '1,2,3' }, { reply: 'Em chưa hiểu' });
+await check('số sai "10"', { text: '10' }, { reply: 'em chưa hiểu' });
+await check('số sai "1,2,3"', { text: '1,2,3' }, { reply: 'em chưa hiểu' });
 await check('lệnh nước "n1 2" → hộp thư + báo', { text: 'n1 2' }, { reply: 'Đã nhận lệnh nước', inbox: true });
 await check('lệnh nước "+1 n1"', { text: '+1 n1' }, { reply: 'Đã nhận lệnh nước', inbox: true });
 await check('xem danh sách nước', { text: 'nước' }, { reply: 'BẢNG GIÁ NƯỚC' });
@@ -178,9 +178,9 @@ await check('câu hỏi có từ khoá vote "sân mấy người chơi em?" → 
 await check('"có đi không?" → AI, không ghi vote', { text: 'có đi không?' }, { reply: 'Dạ em đây' });
 await check('câu dài có "oke" KHÔNG phải vote', { text: 'anh Sơn bảo anh oke rồi em' }, { reply: 'Dạ em đây' });
 await check('câu có số "100k" → AI', { text: 'tăng cho anh Tiến 100k tiền quỹ' }, { reply: 'Dạ em đây' });
-await check('chỉ @bot, không nội dung', { text: '@Bot PickleBall JVB' }, { reply: 'Em đây' });
+await check('chỉ @bot, không nội dung', { text: '@Bot PickleBall JVB' }, { reply: 'em đây' });
 state.ai = 'down';
-await check('AI lỗi vẫn trả lời', { text: 'thời tiết đẹp nhỉ' }, { reply: 'Em chưa hiểu ý' });
+await check('AI lỗi vẫn trả lời', { text: 'thời tiết đẹp nhỉ' }, { reply: 'em chưa hiểu ý' });
 state.ai = 'ok';
 
 {
@@ -215,13 +215,13 @@ console.log('\n— Route cho app/cron: giục nạp quỹ, kết quả vote hế
 
 console.log('\n— Không có buổi nào đang mở vote —');
 state.sessions = [sessionDoc({ status: 'closed' })];
-await check('vote "1"', { text: '1' }, { reply: 'Chưa có buổi nào đang mở vote' });
+await check('vote "1"', { text: '1' }, { reply: 'chưa có buổi nào đang mở vote' });
 await check('"vote" → báo không có', { text: 'vote' }, { reply: 'không có vote nào đang mở' });
 await check('ghi nước vẫn chạy', { text: 'n1 2' }, { reply: 'Đã nhận lệnh nước', inbox: true });
 
 console.log('\n— Buổi đang vote nhưng đã hết hạn —');
 state.sessions = [sessionDoc({ deadlineOffsetH: -2, dateOffsetH: -1 })];
-await check('vote "1"', { text: '1' }, { reply: 'Hết hạn vote' });
+await check('vote "1"', { text: '1' }, { reply: 'hết hạn vote' });
 await check('"vote" vẫn liệt kê kèm "hết hạn"', { text: 'vote' }, { reply: 'Đã hết hạn vote' });
 
 console.log('\n— Ảnh kèm chú thích (nội dung ở caption) —');
