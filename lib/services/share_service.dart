@@ -60,31 +60,41 @@ class ShareService {
   static String balanceReport(TeamStore store) {
     final b = store.balances;
     final players = store.activePlayers.toList()
-      ..sort((x, y) => (b[y.id] ?? 0).compareTo(b[x.id] ?? 0));
-    final sb = StringBuffer('💰 SỐ DƯ QUỸ – ${store.settings.name}\n');
-    sb.writeln('📅 ${fmtDate(DateTime.now())}');
-    for (final p in players) {
-      final bal = b[p.id] ?? 0;
-      final warn = bal < store.settings.lowBalanceThreshold ? ' ⚠️' : '';
-      sb.writeln('• ${p.name}: ${vnd(bal)}$warn');
-    }
-    sb.writeln('🏦 Quỹ chung: ${vnd(store.commonFund)}');
-    return sb.toString();
+      ..sort((x, y) => (b[x.id] ?? 0).compareTo(b[y.id] ?? 0));
+    final th = store.settings.lowBalanceThreshold;
+    final low = players.where((p) => (b[p.id] ?? 0) < th).toList();
+    final bank = store.settings.bankInfo.trim();
+    final blocks = [
+      '💰 QUỸ NHÓM · ${store.settings.name} (${fmtDate(DateTime.now())})',
+      '🏦 Quỹ chung: ${vnd(store.commonFund)}',
+      low.isEmpty
+          ? '✅ Ai cũng còn quỹ, chưa ai cần nạp.'
+          : [
+              '⚠️ CẦN NẠP THÊM (dưới ${vnd(th)})',
+              for (final p in low) '• ${p.name}: ${vnd(b[p.id] ?? 0)}',
+              if (bank.isNotEmpty) '🏦 ${bank.split('\n').map((e) => e.trim()).join(' · ')}',
+            ].join('\n'),
+      [
+        '📋 SỐ DƯ TỪNG NGƯỜI',
+        for (final p in players) '• ${p.name}: ${vnd(b[p.id] ?? 0)}${(b[p.id] ?? 0) < th ? ' ⚠️' : ''}',
+      ].join('\n'),
+    ];
+    return blocks.join('\n\n');
   }
 
   static String lowBalanceReport(TeamStore store) {
     final low = store.lowBalancePlayers;
     if (low.isEmpty) return '✅ Không ai sắp hết quỹ.';
-    final sb = StringBuffer(
-        '⚠️ SẮP HẾT QUỸ (dưới ${vnd(store.settings.lowBalanceThreshold)})\n');
-    for (final p in low) {
-      sb.writeln('• ${p.name}: ${vnd(store.balanceOf(p.id))}');
-    }
-    sb.writeln('👉 Mọi người nộp thêm quỹ nhé!');
-    if (store.settings.bankInfo.trim().isNotEmpty) {
-      sb.writeln('🏦 ${store.settings.bankInfo.trim()}');
-    }
-    return sb.toString();
+    final bank = store.settings.bankInfo.trim();
+    return [
+      '📣 NHẮC NẠP QUỸ · ${store.settings.name}',
+      [
+        '⚠️ CẦN NẠP THÊM (dưới ${vnd(store.settings.lowBalanceThreshold)})',
+        for (final p in low) '• ${p.name}: ${vnd(store.balanceOf(p.id))}',
+      ].join('\n'),
+      '👉 Chuyển khoản rồi nhắn quản lý ghi nhận giúp em nhé!'
+          '${bank.isNotEmpty ? '\n🏦 ${bank.split('\n').map((e) => e.trim()).join(' · ')}' : ''}',
+    ].join('\n\n');
   }
 
   static String commonFundReport(TeamStore store) =>
@@ -111,7 +121,7 @@ class ShareService {
       if (st.commonUsed > 0) sb.writeln('   - Quỹ chung trả: ${vnd(st.commonUsed)}');
       if (st.guestCash > 0) sb.writeln('   - Khách trả tiền mặt: ${vnd(st.guestCash)}');
     }
-    sb.writeln('—');
+    sb.writeln('\n💳 TRỪ QUỸ TỪNG NGƯỜI');
     // Gồm cả người không trong danh sách chơi nhưng có ghi nước (nhập hộ qua Zalo).
     // Người đính kèm ("<id>#n") đã gộp tiền vào người vote nên không liệt kê riêng.
     final pids = {...s.playerIds, ...s.drinks.keys}.where((k) => !Session.isCompanionId(k));
@@ -143,24 +153,56 @@ class ShareService {
 
   /// Nội dung vote gửi lên Zalo.
   static String voteText(TeamStore store, Session s) {
-    final sb = StringBuffer('📊 VOTE ĐẶT SÂN – ${fmtWeekday(s.date)}\n');
-    if (s.title.isNotEmpty) sb.writeln('🏓 ${s.title}');
-    sb.writeln('🕕 ${fmtDateTime(s.date)}');
-    if (s.location.isNotEmpty) sb.writeln('📍 ${s.location}');
-    if (s.createdByName.isNotEmpty) sb.writeln('👤 Người tạo: ${s.createdByName}');
-    sb.writeln('⏰ Hạn vote: ${fmtDateTime(s.effectiveVoteDeadline)}');
-    if (s.maxPlayers != null) sb.writeln('👥 Giới hạn: ${s.maxPlayers} người');
-    sb.writeln('👉 Reply 1 = đi, 2 = đi 2 người (kèm 1), 0 = không. Hết hạn tự chốt.');
+    // Bố cục: việc chính (buổi nào, lúc nào) → điều kiện vote → ai đã vote → cách vote.
+    // Mỗi khối cách nhau một dòng trống để lướt qua là đọc được trên Zalo.
+    final head = [
+      '📊 VOTE ĐẶT SÂN · ${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
+      '🕕 ${fmtWeekday(s.date)} · ${_hm(s.date)}',
+      if (s.location.isNotEmpty) '📍 ${s.location}',
+    ].join('\n');
+    final rules = [
+      '⏰ Hạn vote: ${fmtDateTime(s.effectiveVoteDeadline)}',
+      s.maxPlayers != null ? '👥 Giới hạn: ${s.maxPlayers} suất' : '👥 Không giới hạn số người',
+      if (s.createdByName.isNotEmpty) '👤 Người tạo: ${s.createdByName}',
+    ].join('\n');
     final yes = s.votedYes;
-    if (yes.isNotEmpty) {
-      sb.writeln('\nĐã vote đi (${s.seatsTaken}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} suất):');
-      for (final pid in yes) {
-        final c = s.companionsOf(pid);
-        sb.writeln('✅ ${store.playerName(pid)}${c > 0 ? ' (+$c)' : ''}');
-      }
-    }
-    return sb.toString();
+    final voted = yes.isEmpty
+        ? '✅ Chưa ai vote'
+        : [
+            '✅ ĐÃ VOTE ĐI (${s.seatsTaken}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} suất)',
+            for (final pid in yes)
+              '• ${store.playerName(pid)}${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)})' : ''}',
+          ].join('\n');
+    const guide = '👉 Reply tin này: 1 = đi · 2 = đi 2 người · 0 = không · "@An 1" vote hộ\n'
+        '📌 Quản lý ghim tin này cho dễ thấy. Hết hạn bot tự báo kết quả.';
+    return [head, rules, voted, guide].join('\n\n');
   }
+
+  /// Kết quả vote khi hết hạn (app gửi ở chế độ không webhook; webhook tự gửi khi có).
+  static String voteResultText(TeamStore store, Session s) {
+    final yes = s.votedYes;
+    final no = s.votes.entries.where((e) => !e.value).map((e) => store.playerName(e.key)).toList();
+    final cap = s.maxPlayers != null ? '/${s.maxPlayers}' : '';
+    final blocks = [
+      '🔒 HẾT HẠN VOTE · ${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
+      '🕕 ${fmtWeekday(s.date)} · ${_hm(s.date)}${s.location.isNotEmpty ? '\n📍 ${s.location}' : ''}',
+      yes.isEmpty
+          ? '😢 Chưa có ai vote đi.'
+          : [
+              '✅ ĐI (${s.seatsTaken}$cap suất)',
+              for (final pid in yes)
+                '• ${store.playerName(pid)}${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)} đính kèm)' : ''}',
+            ].join('\n'),
+      if (no.isNotEmpty) '❌ Không đi: ${no.join(', ')}',
+      if (s.maxPlayers != null && s.seatsTaken > s.maxPlayers!)
+        '⚠️ Vượt ${s.seatsTaken - s.maxPlayers!} suất so với giới hạn, quản lý chốt danh sách trong app.',
+      '📌 Quản lý bỏ ghim tin vote giúp em nhé. Danh sách chính thức xem trong app.',
+    ];
+    return blocks.join('\n\n');
+  }
+
+  static String _hm(DateTime d) =>
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
   /// Phân tích kết quả vote copy từ Zalo: tìm tên người chơi xuất hiện
   /// trong văn bản. Trả về danh sách playerId khớp.

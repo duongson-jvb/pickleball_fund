@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/share_service.dart';
 import '../services/team_store.dart';
+import '../services/zalo_actions.dart';
 import '../utils/format.dart';
 import '../widgets/admin_gate.dart';
 import '../widgets/common.dart';
@@ -95,13 +96,18 @@ class DashboardScreen extends StatelessWidget {
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Nhắc lên Zalo',
+                          tooltip: 'Chia sẻ danh sách',
                           icon: const Icon(Icons.share),
                           onPressed: () => ShareService.shareText(
                               context, ShareService.lowBalanceReport(store)),
                         ),
                       ],
                     ),
+                    if (store.settings.hasZaloBot)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: _RemindButton(store: store),
+                      ),
                     Wrap(
                       spacing: 8,
                       children: [
@@ -273,6 +279,44 @@ class LedgerTile extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+
+/// Nút "Giục nạp quỹ": bot gửi danh sách người sắp hết quỹ + ảnh QR lên nhóm Zalo.
+class _RemindButton extends StatefulWidget {
+  const _RemindButton({required this.store});
+  final TeamStore store;
+
+  @override
+  State<_RemindButton> createState() => _RemindButtonState();
+}
+
+class _RemindButtonState extends State<_RemindButton> {
+  bool _busy = false;
+
+  Future<void> _send() async {
+    if (!await requireAdmin(context)) return;
+    setState(() => _busy = true);
+    try {
+      final msg = await ZaloActions.remindLowBalance(widget.store);
+      if (mounted) showSnack(context, msg);
+    } catch (e) {
+      if (mounted) showSnack(context, 'Không gửi được: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: _busy ? null : _send,
+      icon: _busy
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.notifications_active_outlined),
+      label: const Text('Giục nạp quỹ qua Zalo (kèm QR)'),
     );
   }
 }

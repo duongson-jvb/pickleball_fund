@@ -8,12 +8,14 @@ class ZaloCommands {
 
   static const appUrl = 'https://duongson-jvb.github.io/pickleball_fund/';
 
-  static const helpText = '🏓 Bot Quỹ Pickleball\n'
-      '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4 · "@An 1" vote hộ · gõ "vote" xem buổi đang mở\n'
-      '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ\n'
-      '• Quỹ: "quỹ" xem số dư cả nhóm\n'
-      '• Hỏi gì cứ @bot, em trả lời\n'
-      '• App: $appUrl';
+  static const helpText = '🏓 BOT QUỸ PICKLEBALL\n'
+      '\n'
+      '🗳 VOTE · reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không\n'
+      '   "@An 1" vote hộ · "vote" xem buổi đang mở\n'
+      '🥤 NƯỚC · "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ\n'
+      '💰 QUỸ · "quỹ" xem số dư cả nhóm\n'
+      '💬 Hỏi gì cứ @bot, em trả lời\n'
+      '📱 App: $appUrl';
 
   // "menu" chỉ tính khi đứng một mình: "menu nước" là xem danh sách nước.
   static final _helpPattern =

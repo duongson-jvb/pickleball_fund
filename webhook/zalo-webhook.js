@@ -52,6 +52,20 @@ export default {
       return json({ ok: true, results });
     }
 
+    // ---- Cron kết quả vote: GET /cron-votes (GitHub Actions gọi mỗi 10 phút) → buổi vừa
+    // hết hạn vote thì báo kết quả lên nhóm + nhắc bỏ ghim (Zalo Bot API không tự ghim/bỏ ghim được).
+    if (parts[0] === 'cron-votes' && request.method === 'GET') {
+      const authz = request.headers.get('Authorization') || '';
+      const qsSecret = url.searchParams.get('secret') || '';
+      if (env.CRON_SECRET && authz !== `Bearer ${env.CRON_SECRET}` && qsSecret !== env.CRON_SECRET) {
+        return json({ ok: false, error: 'Forbidden' }, 403);
+      }
+      const teams = String(env.TEAM_IDS || env.TEAM_ID || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const results = [];
+      for (const t of teams) results.push({ team: t, ...(await announceExpiredVotes(env, t)) });
+      return json({ ok: true, results });
+    }
+
     // ---- Ảnh QR chuyển khoản (để Zalo tải về khi bot gửi ảnh): GET /<teamId>?qr=1
     if (request.method === 'GET' && teamId && (url.searchParams.has('qr') || parts[1] === 'qr.jpg')) {
       const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=qrImage`);
@@ -85,6 +99,15 @@ export default {
       if (!secretOk) return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
       return proxyZalo(proxyMethod, request);
     }
+    // ---- Lệnh từ app (bắt buộc đúng secret): ?action=remind → giục nạp quỹ kèm QR;
+    // ?action=vote-result → báo kết quả vote của một buổi (&session=<id>).
+    const action = url.searchParams.get('action') || '';
+    if (action) {
+      if (!secretOk) return json({ ok: false, error: 'Forbidden: sai X-Bot-Api-Secret-Token' }, 403);
+      if (action === 'remind') return json({ ok: true, remind: await sendFundReport(env, teamId, null, { weekly: false, remind: true }) });
+      if (action === 'vote-result') return json({ ok: true, result: await announceExpiredVotes(env, teamId, url.searchParams.get('session') || '', true) });
+      return json({ ok: false, error: 'Bad action' }, 400);
+    }
 
     // ---- Webhook từ Zalo
     let body;
@@ -110,6 +133,9 @@ export default {
     const chat = String(chatId);
     const fromName = msg.from?.display_name || '';
     const fromId = String(msg.from?.id || '');
+    // Zalo Bot API không reply vào tin cụ thể được → mỗi câu trả lời trích lại tin đang
+    // trả lời ở dòng đầu ("↩️ Tùng: "1"") cho rõ bot đang nói với ai, về tin nào.
+    let quote = '';
 
     // Lệnh "@bot help": trả lời hướng dẫn ngay, không ghi vào hộp thư vote.
     if (isHelpCommand(text)) {
@@ -122,6 +148,7 @@ export default {
     const tf = teamDoc?.fields || {};
     const token = tf.zaloBotToken?.stringValue || '';
     const botName = tf.zaloBotName?.stringValue || '';
+    quote = quoteLine(fromName, text, botName);
 
     // "@bot quỹ" → bảng số dư cả nhóm ngay.
     if (isFundRequest(text, botName)) {
@@ -169,8 +196,8 @@ export default {
       const proxy = parseProxyVotesJs(text, botName, players);
       if (proxy) {
         const open = await openVoteSession(env, teamId);
-        if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token);
-        if (open.expired) return replyText(env, teamId, chat, expiredText(open), token);
+        if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token, quote);
+        if (open.expired) return replyText(env, teamId, chat, expiredText(open), token, quote);
         const sender = matchPlayerJs(players, fromId, fromName);
         const lines = [];
         const entries = [];
@@ -199,9 +226,9 @@ export default {
           // Chỉ phần vote của chính người gửi (chưa có tên) vào hộp thư, tránh ghi lặp.
           const saved = await saveInbox(env, teamId, messageId, { ...inboxFields, text: s(selfUnknown.rawText) });
           if (!saved.ok) return saved.response;
-          lines.push(`📝 Em đã nhận vote của ${fromName || 'bạn'}. Tên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`);
+          lines.push(`📝 Đã nhận vote của ${fromName || 'bạn'}\nTên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`);
         }
-        return replyText(env, teamId, chat, lines.join('\n'), token);
+        return replyText(env, teamId, chat, lines.join('\n\n'), token, quote);
       }
       // Có @người khác mà không phải vote hộ ("@An đi không?") → câu nói với người
       // đó, không phải vote của người gửi → để AI trả lời.
@@ -211,7 +238,7 @@ export default {
     // Gõ số sai ("10", "01", "0.1", "1,2,3"...) → báo lại ngay, không tính vote.
     if (!isDrinkCommand && voteShape.error) {
       console.log(`vote sai cu phap: "${text.slice(0, 40)}"`);
-      return replyText(env, teamId, chat, voteShape.error, token);
+      return replyText(env, teamId, chat, voteShape.error, token, quote);
     }
 
     // ---- Lệnh ghi nước: app (máy quản trị) mới ghi được → vào hộp thư + báo đã nhận.
@@ -219,14 +246,14 @@ export default {
       const saved = await saveInbox(env, teamId, messageId, inboxFields);
       if (!saved.ok) return saved.response;
       return replyText(env, teamId, chat,
-        `📝 Em đã nhận lệnh nước của ${fromName || 'bạn'}, sẽ ghi vào sổ và báo lại ngay khi quản lý mở app.`, token);
+        `📝 Đã nhận lệnh nước của ${fromName || 'bạn'}\nEm sẽ ghi vào sổ và báo lại ngay khi quản lý mở app.`, token, quote);
     }
 
     // ---- Vote chắc chắn ("1", "2", "0", "đi", "không đi"...): ghi THẲNG vào buổi và xác nhận.
     if (voteShape.definite) {
       const open = await openVoteSession(env, teamId);
-      if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token);
-      if (open.expired) return replyText(env, teamId, chat, expiredText(open), token);
+      if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token, quote);
+      if (open.expired) return replyText(env, teamId, chat, expiredText(open), token, quote);
       const players = await loadPlayers(env, teamId);
       const player = matchPlayerJs(players, fromId, fromName);
       if (!player) {
@@ -234,7 +261,7 @@ export default {
         const saved = await saveInbox(env, teamId, messageId, inboxFields);
         if (!saved.ok) return saved.response;
         return replyText(env, teamId, chat,
-          `📝 Em đã nhận vote của ${fromName || 'bạn'}. Tên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`, token);
+          `📝 Đã nhận vote của ${fromName || 'bạn'}\nTên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`, token, quote);
       }
       const r = await recordVote(env, teamId, open, player, voteShape, dateMs);
       console.log(`vote → ${player.name}: ${r.status}`);
@@ -243,15 +270,15 @@ export default {
         const saved = await saveInbox(env, teamId, messageId, inboxFields);
         if (!saved.ok) return saved.response;
       }
-      return replyText(env, teamId, chat, r.text, token);
+      return replyText(env, teamId, chat, r.text, token, quote);
     }
 
     // ---- Còn lại là câu hỏi / trò chuyện → AI trả lời (không ghi hộp thư). AI lỗi vẫn trả lời.
     if (env.GEMINI_API_KEY || env.OPENAI_API_KEY) {
-      const r = await maybeChatReply(env, teamId, chat, text, fromName);
+      const r = await maybeChatReply(env, teamId, chat, text, fromName, quote);
       if (r) return r;
     }
-    return replyText(env, teamId, chat, FALLBACK_TEXT, token);
+    return replyText(env, teamId, chat, FALLBACK_TEXT, token, quote);
   },
 };
 
@@ -284,12 +311,14 @@ async function proxyZalo(method, request) {
 const APP_URL = 'https://duongson-jvb.github.io/pickleball_fund/';
 
 const HELP_TEXT = [
-  '🏓 Bot Quỹ Pickleball',
-  '• Vote: reply tin vote → 1 = đi, 2 = đi 2 người (kèm 1), 0 = không, tối đa 4 · "@An 1" vote hộ · gõ "vote" xem buổi đang mở',
-  '• Nước: "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
-  '• Quỹ: "quỹ" xem số dư cả nhóm',
-  '• Hỏi gì cứ @bot, em trả lời',
-  `• App: ${APP_URL}`,
+  '🏓 BOT QUỸ PICKLEBALL',
+  '',
+  '🗳 VOTE · reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không',
+  '   "@An 1" vote hộ · "vote" xem buổi đang mở',
+  '🥤 NƯỚC · "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
+  '💰 QUỸ · "quỹ" xem số dư cả nhóm',
+  '💬 Hỏi gì cứ @bot, em trả lời',
+  `📱 App: ${APP_URL}`,
 ].join('\n');
 
 /** Bỏ dấu tiếng Việt + viết thường để so khớp lệnh. */
@@ -359,9 +388,9 @@ async function replyDrinkList(env, teamId, chatId, text) {
   if (!items.length) {
     reply = '🥤 Nhóm chưa có loại nước nào. Quản lý thêm trong app → Cài đặt → Loại nước & giá.';
   } else {
-    reply = '🥤 DANH SÁCH NƯỚC\n' +
+    reply = '🥤 BẢNG GIÁ NƯỚC\n\n' +
       items.map((x) => `${x.code ? 'N' + x.code : '•'} · ${x.name} · ${fmtVnd(x.price)}`).join('\n') +
-      `\nGhi nước: "N1 2" hoặc "${items[0].name} 2"; nhiều loại: "N1 2, N2 1"; cộng thêm: "+1 N1"`;
+      `\n\n👉 Ghi nước: "N1 2" hoặc "${items[0].name} 2"\nNhiều loại: "N1 2, N2 1" · cộng thêm: "+1 N1" · nhập hộ: "@An N1 2"`;
   }
   const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
     method: 'POST',
@@ -391,11 +420,10 @@ function escapeRe(x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 const MAX_VOTE_SEATS = 4;
 
 const NO_OPEN_VOTE_TEXT =
-  '📭 Hiện chưa có buổi nào đang mở vote. Chờ quản lý tạo buổi rồi vote nhé!';
+  '📭 Chưa có buổi nào đang mở vote\nChờ quản lý tạo buổi rồi vote nhé!';
 
 function voteNumberErrorText(original) {
-  return `🤔 Em chưa hiểu "${String(original).trim()}". Reply "0" = không đi, "1" = đi, ` +
-    `"2" = đi 2 người (kèm 1)... tối đa "${MAX_VOTE_SEATS}".`;
+  return `🤔 Em chưa hiểu "${String(original).trim()}"\nReply: 0 = không đi · 1 = đi · 2 = đi 2 người (kèm 1) · tối đa ${MAX_VOTE_SEATS}`;
 }
 
 /**
@@ -495,8 +523,8 @@ async function openVoteSession(env, teamId) {
 }
 
 // ----------------------------------------------------- ghi vote trực tiếp
-const EMPTY_MENTION_TEXT = '👋 Em đây! Gõ "help" để xem cách dùng, "vote" xem buổi đang mở, "nước" xem giá nước, "quỹ" xem số dư.';
-const FALLBACK_TEXT = '😅 Em chưa hiểu ý anh/chị. Gõ "help" để xem các lệnh, hoặc hỏi lại em bằng câu khác nhé.';
+const EMPTY_MENTION_TEXT = '👋 Em đây!\n"help" cách dùng · "vote" buổi đang mở · "nước" giá nước · "quỹ" số dư';
+const FALLBACK_TEXT = '😅 Em chưa hiểu ý anh/chị\nGõ "help" để xem các lệnh, hoặc hỏi lại em bằng câu khác nhé.';
 
 /** Token đăng nhập (ẩn danh) để webhook ghi vote vào Firestore theo rules. */
 /**
@@ -595,8 +623,7 @@ function readVoteValue(text, botName) {
 }
 
 function expiredText(open) {
-  return `⏰ ${open.title ? `Buổi "${open.title}"` : 'Buổi chơi'} đã hết hạn vote lúc ` +
-    `${fmtDateTime(open.deadline)}, vote này không được tính. Báo quản lý nếu cần nhé!`;
+  return `⏰ Hết hạn vote · ${open.title || 'buổi chơi'}\nHạn vote là ${fmtDateTime(open.deadline)}, vote này không được tính. Cần thêm thì báo quản lý nhé!`;
 }
 
 function fieldSeg(pid) {
@@ -608,7 +635,7 @@ function fieldSeg(pid) {
 async function recordVote(env, teamId, sess, player, voteShape, dateMs) {
   const { vote, seats } = readVoteValue(voteShape.original || '', voteShape.botName || '');
   const r = await recordVotes(env, teamId, sess, [{ player, vote, seats, by: '' }], dateMs);
-  return { status: r.status, text: r.lines.join('\n') };
+  return { status: r.status, text: r.lines.join('\n\n') };
 }
 
 /**
@@ -631,19 +658,20 @@ async function recordVotes(env, teamId, sess, entries, dateMs) {
       const taken = seatsTaken({ votes, companions });
       if (taken - mine + e.seats > sess.maxPlayers) {
         const left = Math.max(0, sess.maxPlayers - (taken - mine));
-        lines.push(`😢 ${e.player.name}: ${label} chỉ còn ${left} chỗ (giới hạn ${sess.maxPlayers}), em chưa ghi được ${e.seats} suất. ` +
-          (left > 0 ? `Reply "${left}" để giữ ${left} chỗ nhé.` : 'Báo quản lý nếu cần thêm chỗ nhé.'));
+        lines.push(`😢 ${e.player.name}: HẾT CHỖ · ${label}\n👥 Còn ${left}/${sess.maxPlayers} chỗ, chưa ghi được ${e.seats} suất. ` +
+          (left > 0 ? `Reply "${left}" để giữ ${left} chỗ nhé.` : 'Cần thêm chỗ thì báo quản lý nhé.'));
         continue;
       }
     }
     votes[pid] = e.vote;
     if (e.vote && e.seats > 1) companions[pid] = e.seats - 1; else delete companions[pid];
     const after = seatsTaken({ votes, companions });
-    const by = e.by ? ` (${e.by} vote hộ)` : '';
-    const who = `${e.player.name}${e.vote && e.seats > 1 ? ` (+${e.seats - 1} đính kèm)` : ''}`;
+    const by = e.by ? ` · ${e.by} vote hộ` : '';
+    const who = `${e.player.name}${e.vote && e.seats > 1 ? ` +${e.seats - 1} đính kèm` : ''}`;
+    const left = sess.maxPlayers != null ? ` · còn ${Math.max(0, sess.maxPlayers - after)} chỗ` : '';
     accepted.push({ ...e, text: e.vote
-      ? `✅ ${who}: đi ${label}${by} · đã có ${after}${cap} suất.${e.by ? '' : ' Đổi ý thì reply lại nhé!'}`
-      : `👌 ${e.player.name}: không đi ${label}${by} · còn ${after}${cap} suất.` });
+      ? `✅ ${who} ĐI ${label}${by}\n👥 ${after}${cap} suất${left}${e.by ? '' : ' · đổi ý thì reply lại'}`
+      : `👌 ${e.player.name} KHÔNG ĐI ${label}${by}\n👥 ${after}${cap} suất${left}` });
   }
   if (!accepted.length) return { status: 'full', lines };
 
@@ -780,17 +808,20 @@ async function replyVoteList(env, teamId, chatId, token) {
   }
   const players = await loadPlayers(env, teamId);
   const nameOf = (id) => players.find((p) => p.id === id)?.name || 'Ẩn danh';
-  const lines = ['📊 VOTE ĐANG MỞ'];
+  const blocks = ['📊 VOTE ĐANG MỞ'];
   for (const x of list.slice(0, 3)) {
     const yes = Object.entries(x.votes).filter(([, v]) => v).map(([pid]) =>
       `${nameOf(pid)}${x.companions[pid] ? ` (+${x.companions[pid]})` : ''}`);
-    lines.push(`🏓 ${x.title || 'Buổi chơi'} · ${fmtDateTime(x.date)}${x.location ? ` · ${x.location}` : ''}`);
-    lines.push(`   ${x.expired ? '⏰ Đã hết hạn vote, chờ chốt' : `⏰ Hạn vote ${fmtDateTime(x.deadline)}`}` +
-      ` · ${seatsTaken(x)}${x.maxPlayers != null ? '/' + x.maxPlayers : ''} suất`);
-    lines.push(`   ${yes.length ? '✅ ' + yes.join(', ') : 'Chưa ai vote'}`);
+    const seats = `${seatsTaken(x)}${x.maxPlayers != null ? '/' + x.maxPlayers : ''} suất`;
+    blocks.push([
+      `🏓 ${x.title || 'Buổi chơi'}`,
+      `🕕 ${fmtWeekday(x.date)}${x.location ? ` · 📍 ${x.location}` : ''}`,
+      x.expired ? `⏰ Đã hết hạn vote · chờ chốt` : `⏰ Hạn vote: ${fmtDateTime(x.deadline)}`,
+      `👥 ${seats}${yes.length ? ': ' + yes.join(', ') : ' · chưa ai vote'}`,
+    ].join('\n'));
   }
-  if (list.some((x) => !x.expired)) lines.push('👉 Reply 1 = đi, 2 = đi 2 người, 0 = không.');
-  return replyText(env, teamId, chatId, lines.join('\n'), token);
+  if (list.some((x) => !x.expired)) blocks.push('👉 Reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không');
+  return replyText(env, teamId, chatId, blocks.join('\n\n'), token);
 }
 
 /** Ghi tin vào hộp thư cho app xử lý. */
@@ -809,7 +840,8 @@ async function saveInbox(env, teamId, messageId, fields) {
 }
 
 /** Gửi một tin trả lời vào chat (đọc token của nhóm từ Firestore). */
-async function replyText(env, teamId, chatId, text, knownToken) {
+async function replyText(env, teamId, chatId, text, knownToken, quote = '') {
+  if (quote) text = `${quote}\n\n${text}`;
   let token = knownToken || '';
   if (!token) {
     const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotToken`);
@@ -897,6 +929,82 @@ async function fsGet(env, path) {
   return res.ok ? res.json() : null;
 }
 
+/** Dòng trích tin đang trả lời: ↩️ Tùng: "1" (bỏ phần @bot, cắt ngắn). */
+function quoteLine(fromName, text, botName) {
+  let t = String(text || '');
+  if (botName) t = t.split(botName).join(' ');
+  t = t.replace(/@\s+/g, '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  if (t.length > 40) t = t.slice(0, 38) + '…';
+  return `↩️ ${fromName || 'Bạn'}: "${t}"`;
+}
+
+const WEEKDAYS = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+/** "Thứ 7 24/10 · 12:00" (giờ Việt Nam). */
+const fmtWeekday = (ms) => {
+  const d = new Date(ms + 7 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${WEEKDAYS[d.getUTCDay()]} ${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)} · ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+};
+
+/**
+ * Buổi vừa hết hạn vote (trong 24 giờ qua, đã gửi vote qua bot) mà chưa báo kết quả →
+ * gửi kết quả lên nhóm + nhắc bỏ ghim, rồi ghi dấu vào teams/{id}/zaloVoteState/{sessionId}.
+ * [onlySession] + [force]: app gọi để báo kết quả một buổi ngay (kể cả chưa hết hạn).
+ */
+async function announceExpiredVotes(env, teamId, onlySession = '', force = false) {
+  const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloGroupId`);
+  const token = team?.fields?.zaloBotToken?.stringValue || '';
+  const groupId = team?.fields?.zaloGroupId?.stringValue || '';
+  if (!token || !groupId) return { status: 'no-bot', announced: [] };
+  const docs = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50&orderBy=date%20desc`))?.documents || [];
+  const now = Date.now();
+  const due = docs.map((d) => ({ ...parseSessionDoc(d), voteMsg: d.fields?.zaloVoteMessageId?.stringValue || '' }))
+    .filter((x) => onlySession ? x.id === onlySession
+      : (x.voteMsg && x.expired && now - x.deadline < 24 * 3600e3 && (x.status === 'voting' || x.status === 'closed')));
+  if (!due.length) return { status: 'nothing-due', announced: [] };
+  const players = await loadPlayers(env, teamId);
+  const nameOf = (id) => players.find((p) => p.id === id)?.name || 'Ẩn danh';
+  const announced = [];
+  for (const x of due) {
+    const statePath = `teams/${encodeURIComponent(teamId)}/zaloVoteState/${encodeURIComponent(x.id)}`;
+    if (!force) {
+      const st = await fsGet(env, statePath);
+      if (st?.fields?.announcedAt) continue; // đã báo rồi
+    }
+    const yes = Object.entries(x.votes).filter(([, v]) => v).map(([pid]) => pid);
+    const no = Object.entries(x.votes).filter(([, v]) => !v).map(([pid]) => nameOf(pid));
+    const seats = seatsTaken(x);
+    const cap = x.maxPlayers != null ? `/${x.maxPlayers}` : '';
+    const blocks = [
+      `🔒 ${x.expired ? 'HẾT HẠN VOTE' : 'KẾT QUẢ VOTE'} · ${x.title || 'Buổi chơi'}`,
+      `🕕 ${fmtWeekday(x.date)}${x.location ? `\n📍 ${x.location}` : ''}`,
+      yes.length
+        ? [`✅ ĐI (${seats}${cap} suất)`, ...yes.map((pid) => `• ${nameOf(pid)}${x.companions[pid] ? ` (+${x.companions[pid]} đính kèm)` : ''}`)].join('\n')
+        : '😢 Chưa có ai vote đi.',
+    ];
+    if (no.length) blocks.push(`❌ Không đi: ${no.join(', ')}`);
+    if (x.maxPlayers != null && seats > x.maxPlayers) blocks.push(`⚠️ Vượt ${seats - x.maxPlayers} suất so với giới hạn, quản lý chốt danh sách trong app.`);
+    blocks.push('📌 Quản lý bỏ ghim tin vote giúp em nhé. Danh sách chính thức xem trong app.');
+    const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: groupId, text: blocks.join('\n\n').slice(0, 2000) }),
+    });
+    let zalo = {};
+    try { zalo = await sent.json(); } catch { /* bỏ qua */ }
+    const ok = zalo?.ok === true;
+    if (ok) {
+      await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${statePath}?key=${env.FIREBASE_API_KEY}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { announcedAt: { timestampValue: new Date().toISOString() }, seats: { integerValue: String(seats) } } }),
+      });
+    }
+    console.log(`vote result → ${x.title}: ${ok ? 'sent' : 'failed ' + (zalo?.description || '')}`);
+    announced.push({ session: x.id, title: x.title, sent: ok });
+  }
+  return { status: 'ok', announced };
+}
+
 const fmtDateTime = (ms) => {
   const d = new Date(ms + 7 * 3600 * 1000); // giờ Việt Nam
   const p = (n) => String(n).padStart(2, '0');
@@ -957,7 +1065,7 @@ async function buildContext(env, teamId, teamName) {
 }
 
 /** Tin "lạ" → hỏi OpenAI và trả lời trong chat. Trả null nếu tin là vote/lệnh (để app xử lý). */
-async function maybeChatReply(env, teamId, chatId, text, fromName) {
+async function maybeChatReply(env, teamId, chatId, text, fromName, quote = '') {
   const team = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloBotName&mask.fieldPaths=name`);
   const tf = team?.fields || {};
   const token = tf.zaloBotToken?.stringValue || '';
@@ -967,7 +1075,7 @@ async function maybeChatReply(env, teamId, chatId, text, fromName) {
   if (kind === 'empty') return json({ ok: true, ignored: 'empty-mention' });
   if (kind === 'command') return null;
 
-  const work = chatReplyWork(env, teamId, chatId, text, fromName, token, botName, tf.name?.stringValue || '');
+  const work = chatReplyWork(env, teamId, chatId, text, fromName, token, botName, tf.name?.stringValue || '', quote);
   if (typeof env.waitUntil === 'function') {
     // Zalo chờ phản hồi ngắn; AI có thể mất 10–30 giây → trả lời Zalo ngay, xử lý nền.
     env.waitUntil(work.catch((e) => console.log('chat work failed', String(e))));
@@ -976,7 +1084,7 @@ async function maybeChatReply(env, teamId, chatId, text, fromName) {
   return work;
 }
 
-async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName, teamName) {
+async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName, teamName, quote = '') {
   const context = await buildContext(env, teamId, teamName);
   const system = [
     `Bạn là "${botName || 'Bot'}", trợ lý trong nhóm chat Zalo của một team pickleball, trả lời bằng tiếng Việt, thân thiện, NGẮN GỌN (tối đa 3 câu, không markdown).`,
@@ -997,6 +1105,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
     answer = `😅 Em bị hỏi hơi nhiều, hết lượt rồi. ${llm.quota} Trong lúc chờ, vote, ghi nước, "nước", "quỹ", "help" vẫn chạy bình thường nhé!`;
   }
   if (!answer) answer = FALLBACK_TEXT; // AI lỗi vẫn phải trả lời người hỏi
+  if (quote) answer = `${quote}\n\n${answer}`;
 
   const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
     method: 'POST',
@@ -1099,7 +1208,7 @@ async function askLLM(env, system, user) {
 }
 
 // ------------------------------------------------------------- báo quỹ
-const LOW_BALANCE = 10000; // dưới mức này → đánh dấu nạp thêm
+const LOW_BALANCE_DEFAULT = 10000; // dùng khi nhóm chưa đặt lowBalanceThreshold trong app
 
 function mayBeFundRequest(text) {
   const t = normalizeVi(text).replace(/[?!.,:;]+/g, ' ');
@@ -1127,8 +1236,10 @@ async function fsList(env, path) {
 
 /** Dựng bảng số dư từ players + ledger. */
 async function buildFundReport(env, teamId) {
-  const teamDoc = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=name&mask.fieldPaths=bankInfo&mask.fieldPaths=qrImage&mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloGroupId`);
+  const teamDoc = await fsGet(env, `teams/${encodeURIComponent(teamId)}?mask.fieldPaths=name&mask.fieldPaths=bankInfo&mask.fieldPaths=qrImage&mask.fieldPaths=zaloBotToken&mask.fieldPaths=zaloGroupId&mask.fieldPaths=lowBalanceThreshold`);
   const tf = teamDoc?.fields || {};
+  // Ngưỡng "sắp hết quỹ" lấy theo cài đặt của nhóm trong app (Cài đặt → Ngưỡng cảnh báo).
+  const threshold = parseInt(tf.lowBalanceThreshold?.integerValue || tf.lowBalanceThreshold?.doubleValue || '0', 10) || LOW_BALANCE_DEFAULT;
   const players = (await fsList(env, `teams/${encodeURIComponent(teamId)}/players`))
     .map((d) => ({ id: d.name.split('/').pop(), name: d.fields?.name?.stringValue || '', active: d.fields?.active?.booleanValue !== false }))
     .filter((p) => p.active);
@@ -1141,40 +1252,46 @@ async function buildFundReport(env, teamId) {
     if (!pid) common += amount; else bal[pid] = (bal[pid] || 0) + amount;
   }
   const rows = players.map((p) => ({ ...p, balance: bal[p.id] || 0 })).sort((a, b) => a.balance - b.balance);
-  const low = rows.filter((r) => r.balance < LOW_BALANCE);
+  const low = rows.filter((r) => r.balance < threshold);
   return {
     teamName: tf.name?.stringValue || teamId,
     bankInfo: tf.bankInfo?.stringValue || '',
     hasQr: !!tf.qrImage?.stringValue,
     token: tf.zaloBotToken?.stringValue || '',
     groupId: tf.zaloGroupId?.stringValue || '',
-    rows, low, common,
+    rows, low, common, threshold,
   };
 }
 
-function fundReportText(r, { weekly }) {
+function fundReportText(r, { weekly, remind }) {
   const d = new Date(Date.now() + 7 * 3600 * 1000);
   const today = `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-  const lines = [`💰 ${weekly ? 'BÁO QUỸ TUẦN' : 'QUỸ'} – ${r.teamName} (${today})`];
-  lines.push(`🏦 Quỹ chung: ${fmtVnd(r.common)}`);
-  if (!r.rows.length) lines.push('Chưa có người chơi nào.');
-  for (const x of r.rows) lines.push(`• ${x.name}: ${fmtVnd(x.balance)}${x.balance < LOW_BALANCE ? ' ⚠️ nạp thêm' : ''}`);
-  if (r.low.length) {
-    lines.push(`⚠️ ${r.low.length} bạn dưới ${fmtVnd(LOW_BALANCE)}: ${r.low.map((x) => x.name).join(', ')} – nạp quỹ giúp em nhé!`);
-    if (r.bankInfo) lines.push(`🏦 ${r.bankInfo}`);
-  } else if (weekly) {
-    lines.push('✅ Ai cũng còn quỹ, tuần này êm!');
+  const bank = r.bankInfo ? `🏦 ${r.bankInfo.trim().split(/\r?\n/).join(' · ')}` : '';
+  const lowBlock = r.low.length
+    ? [`⚠️ CẦN NẠP THÊM (dưới ${fmtVnd(r.threshold)})`, ...r.low.map((x) => `• ${x.name}: ${fmtVnd(x.balance)}`)].join('\n')
+    : '✅ Ai cũng còn quỹ, chưa ai cần nạp.';
+  if (remind) {
+    // Nút "Giục nạp quỹ" trong app: chỉ người sắp hết + cách chuyển khoản (QR gửi kèm sau).
+    return [`📣 NHẮC NẠP QUỸ · ${r.teamName} (${today})`, lowBlock,
+      r.low.length ? `👉 Chuyển khoản rồi nhắn quản lý ghi nhận giúp em nhé!${bank ? '\n' + bank : ''}` : ''].filter(Boolean).join('\n\n');
   }
-  return lines.join('\n');
+  const all = r.rows.length
+    ? ['📋 SỐ DƯ TỪNG NGƯỜI', ...r.rows.map((x) => `• ${x.name}: ${fmtVnd(x.balance)}${x.balance < r.threshold ? ' ⚠️' : ''}`)].join('\n')
+    : 'Chưa có người chơi nào.';
+  return [
+    `💰 ${weekly ? 'BÁO QUỸ TUẦN' : 'QUỸ NHÓM'} · ${r.teamName} (${today})`,
+    `🏦 Quỹ chung: ${fmtVnd(r.common)}`,
+    lowBlock + (r.low.length && bank ? '\n' + bank : ''),
+    all,
+  ].join('\n\n');
 }
 
-/** Gửi báo quỹ vào chat (chatId) hoặc nhóm mặc định; kèm ảnh QR nếu có người sắp hết quỹ. */
-async function sendFundReport(env, teamId, chatId, { weekly }) {
+async function sendFundReport(env, teamId, chatId, { weekly, remind = false }) {
   const r = await buildFundReport(env, teamId);
   const target = chatId || r.groupId;
   if (!r.token) return { status: 'no-token' };
   if (!target) return { status: 'no-group' };
-  const text = fundReportText(r, { weekly });
+  const text = fundReportText(r, { weekly, remind });
   const sent = await fetch(`${ZALO_API}/bot${r.token}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: target, text: text.slice(0, 2000) }),
@@ -1187,7 +1304,7 @@ async function sendFundReport(env, teamId, chatId, { weekly }) {
     const photoUrl = `${env.PUBLIC_BASE_URL || 'https://pickleball-zalo-webhook.vercel.app'}/${encodeURIComponent(teamId)}?qr=1&v=${Date.now()}`;
     const ph = await fetch(`${ZALO_API}/bot${r.token}/sendPhoto`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: target, photo: photoUrl, caption: '📷 QR chuyển khoản nộp quỹ' }),
+      body: JSON.stringify({ chat_id: target, photo: photoUrl, caption: `📷 QR chuyển khoản nạp quỹ${r.bankInfo ? ' · ' + r.bankInfo.trim().split(/\r?\n/).join(' · ') : ''}` }),
     });
     let pz = {};
     try { pz = await ph.json(); } catch { /* bỏ qua */ }

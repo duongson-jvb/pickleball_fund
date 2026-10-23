@@ -59,6 +59,13 @@ service cloud.firestore {
         allow update, delete: if isAdmin(teamId);
       }
 
+      match /zaloVoteState/{sessionId} {
+        allow read: if validTeam(teamId);
+        // Webhook ghi dấu "đã báo kết quả vote" (không đăng nhập, giống hộp thư).
+        allow create, update: if validTeam(teamId);
+        allow delete: if isAdmin(teamId);
+      }
+
       // players, ledger, drinkTypes, expenses
       match /{collection}/{docId} {
         allow read: if validTeam(teamId);

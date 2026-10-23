@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../models/models.dart';
 import 'auth_service.dart';
+import 'share_service.dart';
 import 'team_repository.dart';
 import 'zalo_bot_service.dart';
 import 'zalo_vote_sync.dart';
@@ -92,6 +93,18 @@ class TeamStore extends ChangeNotifier {
         ));
         lastZaloInboxSummary = 'Đã tự chốt "${s.title.isEmpty ? 'buổi chơi' : s.title}" khi hết hạn vote';
         notifyListeners();
+        // Báo kết quả lên nhóm. Có webhook thì cron của webhook tự báo (và nhắc bỏ
+        // ghim); chỉ gửi từ app khi không có webhook, và chỉ khi vote đã gửi qua bot.
+        final st = settings;
+        if (!st.zaloWebhookMode && st.hasZaloBot && st.zaloGroupId.isNotEmpty &&
+            s.zaloVoteMessageId.isNotEmpty) {
+          try {
+            await ZaloBotService.forTeam(st, repo.teamId)
+                .sendMessage(st.zaloGroupId, ShareService.voteResultText(this, s));
+          } catch (_) {
+            // Không gửi được thì thôi, danh sách đã chốt.
+          }
+        }
       } catch (_) {
         // Thử lại ở lần kiểm tra sau.
       } finally {

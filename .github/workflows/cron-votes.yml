@@ -1,0 +1,17 @@
+name: Báo kết quả vote hết hạn
+
+# Vercel Hobby chỉ cho cron mỗi ngày một lần, nên dùng GitHub Actions gọi webhook
+# mỗi 10 phút: buổi vừa hết hạn vote → bot gửi kết quả lên nhóm + nhắc bỏ ghim.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gọi /cron-votes
+        run: |
+          curl -sS --fail-with-body -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://pickleball-zalo-webhook.vercel.app/cron-votes"

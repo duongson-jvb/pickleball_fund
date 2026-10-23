@@ -103,7 +103,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           isScrollable: true,
           tabAlignment: TabAlignment.start,
           tabs: [
-            Tab(text: 'Vote (${s.votedYes.length})'),
+            Tab(text: 'Vote (${s.seatsTaken})'),
             Tab(text: 'Người chơi (${s.playerIds.length})'),
             const Tab(text: 'Nước'),
             const Tab(text: 'Tổng kết'),
@@ -275,8 +275,7 @@ class _VoteTabState extends State<_VoteTab> {
     }
     setState(() => _botBusy = true);
     try {
-      var text = ShareService.voteText(store, session);
-      if (asVote) text += '\n👉 REPLY tin này: 1 = đi, 0 = không đi (bot sẽ tự ghi nhận).';
+      final text = ShareService.voteText(store, session);
       final id = await _bot(store).sendMessage(s.zaloGroupId, text);
       if (asVote) {
         await store.repo.updateSessionFields(session.id, {'zaloVoteMessageId': id});
@@ -416,7 +415,7 @@ class _VoteTabState extends State<_VoteTab> {
     final yes = session.votedYes;
     final ok = await confirm(
       context,
-      'Chốt danh sách ${yes.length} người?',
+      'Chốt danh sách ${session.seatsTaken} suất (${yes.length} người vote)?',
       message: 'Danh sách người chơi sẽ lấy từ vote. Bạn vẫn có thể thêm/bớt '
           'người sau khi chốt, tiền sẽ được tính lại.',
       okLabel: 'Chốt',
@@ -465,7 +464,8 @@ class _VoteTabState extends State<_VoteTab> {
                                 : 'Đang vote',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     const Spacer(),
-                    Text('${s.votedYes.length}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} đi'
+                    // Đếm SUẤT (người vote + đính kèm), không đếm số người bấm vote.
+                    Text('${s.seatsTaken}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} suất'
                         '${s.isFull ? ' · đủ người' : ''}'),
                   ],
                 ),

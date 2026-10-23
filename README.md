@@ -105,9 +105,12 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
    phần trước dấu @ đầu tiên (nếu có) là của chính người gửi. Tên khớp dài nhất với danh sách, viết tắt duy nhất cũng được.
 7. **Hỏi đáp bằng AI**: tin không phải vote hay lệnh (câu hỏi, trò chuyện) được **Gemini** (miễn phí) trả lời ngay tại webhook,
    biết lịch buổi sắp tới, bảng giá nước, các lệnh bot. Hết hạn mức thì bot báo vui vẻ kèm lúc hỏi lại được. Xem `webhook/README.md`.
-8. **Báo quỹ**: gõ `@bot quỹ` (hoặc `quy`, `số dư`) → bot gửi số dư cả nhóm, quỹ chung, đánh dấu ⚠️ người dưới 10.000đ.
-   **Tự động mỗi Chủ nhật 9:00 (giờ Việt Nam)** qua Vercel Cron (`/cron-weekly`, lịch `0 2 * * 0` UTC): gửi bảng quỹ vào nhóm;
-   nếu có người dưới 10.000đ thì kèm thông tin chuyển khoản và **ảnh QR** (bot gửi ảnh qua URL `/<mã nhóm>?qr=1` của webhook).
+8. **Báo quỹ**: gõ `@bot quỹ` (hoặc `quy`, `số dư`) → bot gửi quỹ chung, khối "Cần nạp thêm" (dưới ngưỡng cảnh báo đặt trong app), số dư từng người.
+   **Tự động mỗi Thứ 6 8:00 (giờ Việt Nam)** qua Vercel Cron (`/cron-weekly`, lịch `0 1 * * 5` UTC): gửi bảng quỹ vào nhóm;
+   nếu có người dưới ngưỡng thì kèm thông tin chuyển khoản và **ảnh QR** (bot gửi ảnh qua URL `/<mã nhóm>?qr=1` của webhook).
+   Nút **Giục nạp quỹ qua Zalo** ở trang chính gửi ngay danh sách sắp hết quỹ + QR (`POST /<mã nhóm>?action=remind`, kèm secret).
+9. **Kết quả vote khi hết hạn**: GitHub Actions (`.github/workflows/cron-votes.yml`) gọi `GET /cron-votes` mỗi 10 phút; buổi đã gửi
+   vote qua bot mà vừa hết hạn → bot gửi kết quả lên nhóm và nhắc bỏ ghim (dấu "đã báo" ở `zaloVoteState/<buổi>`).
    Không ai hết quỹ thì không gửi QR. Biến Vercel: `TEAM_ID` (nhóm nhận báo), `CRON_SECRET`, `PUBLIC_BASE_URL`.
    App ghi vào buổi gần nhất người đó tham gia (36 giờ trước → 6 giờ sau giờ chơi), tính lại tiền và bot trả lời xác nhận
    kèm tổng tiền nước. Người chưa có trong danh sách hoặc không tìm thấy buổi thì bot báo để quản lý xử lý.

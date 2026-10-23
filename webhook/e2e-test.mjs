@@ -7,7 +7,7 @@
 import worker from './zalo-webhook.js';
 
 const TEAM = 'team-test-01';
-const state = { sessions: [], players: [], sent: [], saved: [], patched: [], ai: 'ok' , signUps: [] };
+const state = { sessions: [], players: [], sent: [], saved: [], patched: [], ai: 'ok', signUps: [], photos: [], voteState: [], announced: false };
 
 const doc = (name, fields) => ({ name: `projects/p/databases/(default)/documents/${name}`, fields });
 const priceField = (v) => ({
@@ -21,7 +21,7 @@ const player = (id, name, zaloId = '', zaloName = '') => doc(`teams/${TEAM}/play
 });
 
 function sessionDoc({ id = 's1', status = 'voting', dateOffsetH = 48, deadlineOffsetH = 24, title = 'Thứ 7',
-  max = null, votes = {}, companions = {} } = {}) {
+  max = null, votes = {}, companions = {}, voteMsg = '' } = {}) {
   const now = Date.now();
   const f = {
     status: { stringValue: status },
@@ -32,6 +32,7 @@ function sessionDoc({ id = 's1', status = 'voting', dateOffsetH = 48, deadlineOf
     companions: { mapValue: { fields: Object.fromEntries(Object.entries(companions).map(([k, v]) => [k, { integerValue: String(v) }])) } },
   };
   if (max != null) f.maxPlayers = { integerValue: String(max) };
+  if (voteMsg) f.zaloVoteMessageId = { stringValue: voteMsg };
   return doc(`teams/${TEAM}/sessions/${id}`, f);
 }
 
@@ -40,6 +41,16 @@ globalThis.fetch = async (url, opts = {}) => {
   const ok = (body, status = 200) => new Response(JSON.stringify(body), {
     status, headers: { 'content-type': 'application/json' } });
   if (u.includes('/sendMessage')) { state.sent.push(JSON.parse(opts.body).text); return ok({ ok: true, result: { message_id: 'x' } }); }
+  if (u.includes('/sendPhoto')) { state.photos.push(JSON.parse(opts.body).photo); return ok({ ok: true, result: { message_id: 'p' } }); }
+  if (u.includes('/zaloVoteState/')) {
+    if (opts.method === 'PATCH') { state.voteState.push(u); return ok({}); }
+    return state.announced ? ok({ fields: { announcedAt: { timestampValue: '2026-01-01T00:00:00Z' } } }) : ok({ error: { code: 404 } }, 404);
+  }
+  if (u.includes('/ledger')) return ok({ documents: [
+    doc(`teams/${TEAM}/ledger/l1`, { playerId: { stringValue: 'p-an' }, amount: { integerValue: '5000' } }),
+    doc(`teams/${TEAM}/ledger/l2`, { playerId: { stringValue: 'p-binh' }, amount: { integerValue: '90000' } }),
+    doc(`teams/${TEAM}/ledger/l3`, { amount: { integerValue: '200000' } }),
+  ] });
   if (u.includes('securetoken.googleapis.com')) return ok({ id_token: 'idtok' });
   if (u.includes('/drinkTypes')) {
     return ok({ documents: [
@@ -70,6 +81,9 @@ globalThis.fetch = async (url, opts = {}) => {
       zaloBotToken: { stringValue: '250:abc' },
       name: { stringValue: 'Team' },
       zaloGroupId: { stringValue: 'g1' },
+      bankInfo: { stringValue: 'TCB 123' },
+      qrImage: { stringValue: 'AAAA' },
+      lowBalanceThreshold: { integerValue: '50000' },
     }));
   }
   return ok({});
@@ -119,8 +133,8 @@ state.players = [player('p-an', 'An', AN), player('p-binh', 'Bình', BINH, 'Binh
 
 console.log('— Có buổi đang mở vote (giới hạn 4) —');
 state.sessions = [sessionDoc({ max: 4, votes: { 'p-binh': true }, companions: { 'p-binh': 1 } })];
-await check('vote "1" (người đã biết)', { text: '1' }, { reply: '✅ An: đi', patched: true });
-await check('vote "@Bot PickleBall JVB 1" (mention bot)', { text: '@Bot PickleBall JVB 1' }, { reply: '✅ An: đi', patched: true });
+await check('vote "1" (người đã biết)', { text: '1' }, { reply: '✅ An ĐI', patched: true });
+await check('vote "@Bot PickleBall JVB 1" (mention bot)', { text: '@Bot PickleBall JVB 1' }, { reply: '✅ An ĐI', patched: true });
 const r2 = await check('vote "2" (kèm 1)', { text: '2' }, { reply: '+1 đính kèm', patched: true });
 // id người chơi có dấu "-" → field path trong updateMask phải bọc backtick (`p-an`).
 if (!r2.patched.every((p) => p.url.includes(encodeURIComponent('votes.`p-an`')))) {
@@ -129,35 +143,35 @@ if (!r2.patched.every((p) => p.url.includes(encodeURIComponent('votes.`p-an`')))
 state.patchFail = true;
 await check('ghi vote lỗi → hộp thư + báo đã nhận', { text: '1' }, { reply: 'chưa ghi được ngay', inbox: true });
 state.patchFail = false;
-await check('vote "0"', { text: '0' }, { reply: '👌 An: không đi', patched: true });
-await check('vote "3" vượt chỗ (còn 2)', { text: '3' }, { reply: 'chỉ còn 2 chỗ' });
-await check('vote câu ngắn "cho em đi với"', { text: 'cho em đi với' }, { reply: '✅ An: đi', patched: true });
+await check('vote "0"', { text: '0' }, { reply: '👌 An KHÔNG ĐI', patched: true });
+await check('vote "3" vượt chỗ (còn 2)', { text: '3' }, { reply: 'Còn 2/4 chỗ' });
+await check('vote câu ngắn "cho em đi với"', { text: 'cho em đi với' }, { reply: '✅ An ĐI', patched: true });
 const TUNG = { id: 'z9', display_name: 'Tùng' };
-const px = await check('vote hộ "@An 1" (Tùng vote hộ)', { text: '@Bot PickleBall JVB @An 1', from: TUNG }, { reply: '✅ An: đi "Thứ 7" (Tùng vote hộ)', patched: true });
+const px = await check('vote hộ "@An 1" (Tùng vote hộ)', { text: '@Bot PickleBall JVB @An 1', from: TUNG }, { reply: '✅ An ĐI "Thứ 7" · Tùng vote hộ', patched: true });
 if (!px.sent.join('\n').includes('Tùng')) { fails++; log.push('SAI  vote hộ phải ghi tên người vote hộ'); }
-const px2 = await check('vote hộ nhiều người "@Bình 0 @An 2"', { text: '@Bình 0 @An 2', from: TUNG }, { reply: '👌 Bình: không đi', patched: true });
-if (!px2.sent.join('\n').includes('An (+1 đính kèm)')) { fails++; log.push('SAI  vote hộ "@An 2" phải ra +1 đính kèm'); }
+const px2 = await check('vote hộ nhiều người "@Bình 0 @An 2"', { text: '@Bình 0 @An 2', from: TUNG }, { reply: '👌 Bình KHÔNG ĐI', patched: true });
+if (!px2.sent.join('\n').includes('An +1 đính kèm')) { fails++; log.push('SAI  vote hộ "@An 2" phải ra +1 đính kèm'); }
 if (!(px2.patched.length === 1 && px2.patched[0].url.includes('p-binh') && px2.patched[0].url.includes('p-an'))) { fails++; log.push('SAI  vote hộ nhiều người phải ghi trong MỘT lần PATCH'); }
-await check('vote hộ + tự vote "1 @An 0"', { text: '1 @An 0', from: TUNG }, { reply: '✅ Tùng: đi', patched: true });
-await check('vote hộ theo tên hiển thị Zalo đã nhớ "@Binh Dep Trai 1"', { text: '@Binh Dep Trai 1', from: TUNG }, { reply: '✅ Bình: đi', patched: true });
-await check('vote hộ tên dài chứa tên app "@Nguyễn Văn An 0"', { text: '@Nguyễn Văn An 0', from: TUNG }, { reply: '👌 An: không đi', patched: true });
+await check('vote hộ + tự vote "1 @An 0"', { text: '1 @An 0', from: TUNG }, { reply: '✅ Tùng ĐI', patched: true });
+await check('vote hộ theo tên hiển thị Zalo đã nhớ "@Binh Dep Trai 1"', { text: '@Binh Dep Trai 1', from: TUNG }, { reply: '✅ Bình ĐI', patched: true });
+await check('vote hộ tên dài chứa tên app "@Nguyễn Văn An 0"', { text: '@Nguyễn Văn An 0', from: TUNG }, { reply: '👌 An KHÔNG ĐI', patched: true });
 await check('vote hộ tên lạ', { text: '@Người Lạ 1', from: TUNG }, { reply: 'Không tìm thấy người chơi "nguoi la"' });
 await check('vote hộ số sai "@An 10"', { text: '@An 10', from: TUNG }, { reply: 'Em chưa hiểu' });
-await check('vote hộ vượt chỗ "@An 3" (còn 2)', { text: '@An 3', from: TUNG }, { reply: 'chỉ còn 2 chỗ' });
+await check('vote hộ vượt chỗ "@An 3" (còn 2)', { text: '@An 3', from: TUNG }, { reply: 'Còn 2/4 chỗ' });
 await check('"@An đi không?" là câu hỏi → AI', { text: '@An đi không?', from: TUNG }, { reply: 'Dạ em đây' });
 await check('"@An đi nhé" ngắn có từ khoá nhưng nói với người khác → AI', { text: '@An đi nhé', from: TUNG }, { reply: 'Dạ em đây' });
 await check('"@An mai đi sớm nhé" là câu nói → AI', { text: '@An mai đi sớm nhé anh ơi', from: TUNG }, { reply: 'Dạ em đây' });
-const px3 = await check('người lạ tự vote + vote hộ "1 @An 1"', { text: '1 @An 1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: '✅ An: đi', inbox: true, patched: true });
+const px3 = await check('người lạ tự vote + vote hộ "1 @An 1"', { text: '1 @An 1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: '✅ An ĐI', inbox: true, patched: true });
 if (!(px3.saved.length === 1 && px3.saved[0] === '1')) { fails++; log.push(`SAI  hộp thư chỉ được chứa phần tự vote "1", đang là ${JSON.stringify(px3.saved)}`); }
 if (!px3.sent.join('\n').includes('chưa có trong danh sách')) { fails++; log.push('SAI  phải báo người gửi chưa có tên'); }
-await check('khớp theo tên hiển thị', { text: '1', from: { id: 'z9', display_name: 'Tùng' } }, { reply: '✅ Tùng: đi', patched: true });
+await check('khớp theo tên hiển thị', { text: '1', from: { id: 'z9', display_name: 'Tùng' } }, { reply: '✅ Tùng ĐI', patched: true });
 await check('người lạ vote → hộp thư + báo', { text: '1', from: { id: 'z8', display_name: 'Người Mới' } }, { reply: 'chưa có trong danh sách', inbox: true });
 await check('số sai "10"', { text: '10' }, { reply: 'Em chưa hiểu' });
 await check('số sai "1,2,3"', { text: '1,2,3' }, { reply: 'Em chưa hiểu' });
-await check('lệnh nước "n1 2" → hộp thư + báo', { text: 'n1 2' }, { reply: 'đã nhận lệnh nước', inbox: true });
-await check('lệnh nước "+1 n1"', { text: '+1 n1' }, { reply: 'đã nhận lệnh nước', inbox: true });
-await check('xem danh sách nước', { text: 'nước' }, { reply: 'DANH SÁCH NƯỚC' });
-await check('hướng dẫn', { text: '@bot help' }, { reply: 'Bot Quỹ Pickleball' });
+await check('lệnh nước "n1 2" → hộp thư + báo', { text: 'n1 2' }, { reply: 'Đã nhận lệnh nước', inbox: true });
+await check('lệnh nước "+1 n1"', { text: '+1 n1' }, { reply: 'Đã nhận lệnh nước', inbox: true });
+await check('xem danh sách nước', { text: 'nước' }, { reply: 'BẢNG GIÁ NƯỚC' });
+await check('hướng dẫn', { text: '@bot help' }, { reply: 'BOT QUỸ PICKLEBALL' });
 await check('"vote" → danh sách vote đang mở', { text: '@Bot PickleBall JVB vote' }, { reply: 'VOTE ĐANG MỞ' });
 await check('chuyện phiếm → AI', { text: 'thời tiết đẹp nhỉ' }, { reply: 'Dạ em đây' });
 await check('câu dài có "oke" KHÔNG phải vote', { text: 'anh Sơn bảo anh oke rồi em' }, { reply: 'Dạ em đây' });
@@ -167,20 +181,50 @@ state.ai = 'down';
 await check('AI lỗi vẫn trả lời', { text: 'thời tiết đẹp nhỉ' }, { reply: 'Em chưa hiểu ý' });
 state.ai = 'ok';
 
+{
+  const q = await send({ text: '1' });
+  if (!q.sent[0]?.startsWith('↩️ An: "1"\n\n')) { fails++; log.push(`SAI  trả lời phải trích tin đang trả lời, đang là ${JSON.stringify(q.sent[0]?.slice(0, 30))}`); }
+  else log.push('OK   trả lời trích lại tin đang trả lời (↩️ An: "1")');
+}
+
+console.log('\n— Route cho app/cron: giục nạp quỹ, kết quả vote hết hạn —');
+{
+  state.sent = []; state.voteState = [];
+  const res = await worker.fetch(new Request(`https://h/${TEAM}?action=remind`, { method: 'POST', headers: { 'X-Bot-Api-Secret-Token': 'sec' } }), { ...env, ZALO_SECRET: 'sec' });
+  const body = await res.json();
+  const okR = body.ok && state.sent[0]?.includes('NHẮC NẠP QUỸ') && state.photos.length === 1;
+  if (!okR) fails++;
+  log.push(`${okR ? 'OK  ' : 'SAI '} ${'?action=remind → nhắc + QR'.padEnd(40)} "${(state.sent[0] || '(im lặng)').slice(0, 46).replace(/\n/g, ' ')}"${state.photos.length ? ' · QR' : ''}`);
+  const bad = await worker.fetch(new Request(`https://h/${TEAM}?action=remind`, { method: 'POST' }), { ...env, ZALO_SECRET: 'sec' });
+  if (bad.status !== 403) { fails++; log.push('SAI  ?action=remind thiếu secret phải 403'); } else log.push('OK   ?action=remind thiếu secret → 403');
+
+  state.sent = []; state.photos = []; state.voteState = [];
+  state.sessions = [sessionDoc({ id: 's9', deadlineOffsetH: -1, dateOffsetH: 2, votes: { 'p-an': true, 'p-binh': false }, companions: { 'p-an': 1 }, max: 4, voteMsg: 'm1' })];
+  const cr = await worker.fetch(new Request('https://h/cron-votes', { headers: { Authorization: 'Bearer cs' } }), { ...env, CRON_SECRET: 'cs' });
+  const cb = await cr.json();
+  const okC = cb.ok && state.sent[0]?.includes('HẾT HẠN VOTE') && state.sent[0].includes('An (+1 đính kèm)') && state.sent[0].includes('Không đi: Bình') && state.voteState.length === 1;
+  if (!okC) fails++;
+  log.push(`${okC ? 'OK  ' : 'SAI '} ${'/cron-votes → báo kết quả + ghi dấu'.padEnd(40)} "${(state.sent[0] || '(im lặng)').slice(0, 46).replace(/\n/g, ' ')}"`);
+  state.sent = []; state.voteState = []; state.announced = true;
+  await (await worker.fetch(new Request('https://h/cron-votes', { headers: { Authorization: 'Bearer cs' } }), { ...env, CRON_SECRET: 'cs' })).json();
+  if (state.sent.length) { fails++; log.push('SAI  /cron-votes đã báo rồi thì không báo lại'); } else log.push('OK   /cron-votes không báo lại buổi đã báo');
+  state.announced = false;
+}
+
 console.log('\n— Không có buổi nào đang mở vote —');
 state.sessions = [sessionDoc({ status: 'closed' })];
-await check('vote "1"', { text: '1' }, { reply: 'chưa có buổi nào đang mở vote' });
+await check('vote "1"', { text: '1' }, { reply: 'Chưa có buổi nào đang mở vote' });
 await check('"vote" → báo không có', { text: 'vote' }, { reply: 'không có vote nào đang mở' });
-await check('ghi nước vẫn chạy', { text: 'n1 2' }, { reply: 'đã nhận lệnh nước', inbox: true });
+await check('ghi nước vẫn chạy', { text: 'n1 2' }, { reply: 'Đã nhận lệnh nước', inbox: true });
 
 console.log('\n— Buổi đang vote nhưng đã hết hạn —');
 state.sessions = [sessionDoc({ deadlineOffsetH: -2, dateOffsetH: -1 })];
-await check('vote "1"', { text: '1' }, { reply: 'hết hạn vote' });
+await check('vote "1"', { text: '1' }, { reply: 'Hết hạn vote' });
 await check('"vote" vẫn liệt kê kèm "hết hạn"', { text: 'vote' }, { reply: 'Đã hết hạn vote' });
 
 console.log('\n— Ảnh kèm chú thích (nội dung ở caption) —');
 state.sessions = [sessionDoc({ status: 'closed' })];
-await check('caption "n1 2"', { caption: 'n1 2' }, { reply: 'đã nhận lệnh nước', inbox: true });
+await check('caption "n1 2"', { caption: 'n1 2' }, { reply: 'Đã nhận lệnh nước', inbox: true });
 
 console.log('\n— Thiếu BOT_REFRESH_TOKEN (không được tạo tài khoản ẩn danh) —');
 state.sessions = [sessionDoc({ max: 4 })];

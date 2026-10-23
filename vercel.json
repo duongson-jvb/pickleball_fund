@@ -1,7 +1,18 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/$1" }],
-  "github": { "enabled": true, "silent": true },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/$1"
+    }
+  ],
+  "github": {
+    "enabled": true,
+    "silent": true
+  },
   "crons": [
-    { "path": "/cron-weekly", "schedule": "0 2 * * 0" }
+    {
+      "path": "/cron-weekly",
+      "schedule": "0 1 * * 5"
+    }
   ]
 }
