@@ -455,8 +455,8 @@ class ZaloVoteSync {
             fullNames.add('$who${count > 1 ? ' ($count suất)' : ''}');
             ignored++;
             final left = session.maxPlayers! - (seats - mine);
-            lines.add('😢 $who: $label chỉ còn $left chỗ (giới hạn ${session.maxPlayers}), '
-                'em chưa ghi được $count suất.${left > 0 ? ' Reply "$left" để giữ $left chỗ nhé.' : ''}');
+            lines.add('😢 $who: HẾT CHỖ · $label\n👥 Còn $left/${session.maxPlayers} chỗ, chưa ghi được $count suất.'
+                '${left > 0 ? ' Reply "$left" để giữ $left chỗ nhé.' : ' Cần thêm chỗ thì báo quản lý nhé.'}');
             continue;
           }
         }
@@ -499,11 +499,13 @@ class ZaloVoteSync {
         if (!applied.contains(player.name)) applied.add(player.name);
         // Xác nhận cho người vote (ở chế độ webhook, chỉ người mới được tự thêm
         // hoặc tin webhook ghi lỗi mới tới đây; còn lại webhook đã xác nhận ngay).
-        final by = a.isSelf ? '' : ' (${sender?.name ?? u.fromName} vote hộ)';
+        // Cùng bố cục với webhook: dòng 1 = ai, đi/không, buổi nào; dòng 2 = số suất.
+        final by = a.isSelf ? '' : ' · ${sender?.name ?? u.fromName} vote hộ';
+        final left = session.maxPlayers != null ? ' · còn ${(session.maxPlayers! - seatsNow()).clamp(0, 999)} chỗ' : '';
         lines.add(vote
-            ? '✅ ${player.name}${count > 1 ? ' (+${count - 1} đính kèm)' : ''}: đi $label$by · đã có ${seatsNow()}$cap suất.'
-                '${createdNames.contains(player.name) ? ' Đã thêm vào danh sách người chơi.' : ''}'
-            : '👌 ${player.name}: không đi $label$by · còn ${seatsNow()}$cap suất.');
+            ? '✅ ${player.name}${count > 1 ? ' +${count - 1} đính kèm' : ''} ĐI $label$by\n👥 ${seatsNow()}$cap suất$left'
+                '${createdNames.contains(player.name) ? '\n🆕 Đã thêm vào danh sách người chơi.' : ''}'
+            : '👌 ${player.name} KHÔNG ĐI $label$by\n👥 ${seatsNow()}$cap suất$left');
         // Ghi nhớ Zalo id để lần sau khớp chính xác.
         if (a.isSelf && player.zaloId != u.fromId && u.fromId.isNotEmpty) {
           await store.repo.updatePlayer(player.id, {
@@ -512,7 +514,12 @@ class ZaloVoteSync {
           });
         }
       }
-      if (lines.isNotEmpty) confirmations.putIfAbsent(u.chatId, () => []).addAll(lines);
+      if (lines.isNotEmpty) {
+        // Trích lại tin đang trả lời (API không reply vào tin cụ thể được).
+        final quoted = u.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+        final quote = '↩️ ${u.fromName.isEmpty ? 'Bạn' : u.fromName}: "${quoted.length > 40 ? '${quoted.substring(0, 38)}…' : quoted}"';
+        confirmations.putIfAbsent(u.chatId, () => []).add('$quote\n\n${lines.join('\n\n')}');
+      }
     }
 
     if (session != null &&
@@ -533,7 +540,7 @@ class ZaloVoteSync {
     // Gửi cả ở chế độ webhook, vì webhook mới chỉ báo "đã nhận" (người chưa có
     // tên / ghi lỗi) chứ chưa xác nhận đã ghi vote.
     for (final e in confirmations.entries) {
-      await _send(store, e.key, e.value.join('\n'));
+      await _send(store, e.key, e.value.join('\n\n'));
     }
     return ZaloSyncResult(
       target: session,

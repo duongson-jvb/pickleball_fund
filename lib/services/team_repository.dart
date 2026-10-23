@@ -51,6 +51,13 @@ class TeamRepository {
   Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> watchZaloInbox() =>
       zaloInbox.orderBy('date').limit(200).snapshots().map((s) => s.docs);
 
+  /// Dấu "đã báo kết quả vote" của một buổi (webhook cron cũng ghi vào đây).
+  Future<void> markVoteAnnounced(String sessionId, {required int seats}) =>
+      teamDoc.collection('zaloVoteState').doc(sessionId).set({
+        'announcedAt': FieldValue.serverTimestamp(),
+        'seats': seats,
+      }, SetOptions(merge: true));
+
   Future<void> deleteZaloInbox(Iterable<String> ids) async {
     if (ids.isEmpty) return;
     final batch = _db.batch();

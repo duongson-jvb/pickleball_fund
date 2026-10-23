@@ -21,9 +21,10 @@ class ZaloActions {
       final remind = r['remind'] as Map<String, dynamic>? ?? {};
       final status = remind['status']?.toString() ?? '';
       if (!status.startsWith('sent')) throw Exception('Bot không gửi được: $status');
-      final low = remind['low'];
+      final low = (remind['low'] as num?)?.toInt() ?? 0;
       final qr = remind['qr']?.toString();
-      return 'Đã nhắc ${low ?? 0} người sắp hết quỹ lên Zalo'
+      if (low == 0) return 'Không ai sắp hết quỹ, bot đã báo lên nhóm.';
+      return 'Đã nhắc $low người sắp hết quỹ lên Zalo'
           '${qr == null ? '' : qr == 'sent' ? ' kèm QR' : ' (QR lỗi: $qr)'}';
     }
     await ZaloBotService.forTeam(s, store.repo.teamId)

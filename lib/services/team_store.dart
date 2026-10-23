@@ -101,6 +101,7 @@ class TeamStore extends ChangeNotifier {
           try {
             await ZaloBotService.forTeam(st, repo.teamId)
                 .sendMessage(st.zaloGroupId, ShareService.voteResultText(this, s));
+            await repo.markVoteAnnounced(s.id, seats: s.seatsTaken);
           } catch (_) {
             // Không gửi được thì thôi, danh sách đã chốt.
           }

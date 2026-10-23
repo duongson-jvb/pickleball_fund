@@ -67,3 +67,8 @@ Xem log request: https://vercel.com → project → **Logs**.
 
 - Catch-all `api/[...path].js` của Vercel không khớp đường dẫn nhiều đoạn sau rewrite, nên proxy dùng query `?zalo=<method>`.
 - Khi webhook đang bật, Zalo không trả tin qua `getUpdates`. App chỉ bật chế độ webhook khi Zalo xác minh thành công.
+- Route cho app/cron (ngoài webhook Zalo):
+  - `GET /cron-weekly` (Vercel Cron, Thứ 6 8:00 VN, `Authorization: Bearer CRON_SECRET`): báo quỹ tuần, kèm QR nếu có người dưới ngưỡng.
+  - `GET /cron-votes` (GitHub Actions mỗi 10 phút, cùng secret): buổi đã gửi vote qua bot mà vừa hết hạn → gửi kết quả + nhắc bỏ ghim, ghi dấu `zaloVoteState/<buổi>`.
+  - `POST /<teamId>?action=remind` (header `X-Bot-Api-Secret-Token`): nút "Giục nạp quỹ" trong app → danh sách sắp hết quỹ + QR.
+- Zalo Bot API không có pin/unpin/edit/delete/reply_to (đã thử, 404): bot trích tin đang trả lời ở dòng đầu (`↩️ Tên: "..."`) và nhắc ghim/bỏ ghim bằng chữ.
