@@ -18,13 +18,13 @@ Cả hai đường POST đều yêu cầu header `X-Bot-Api-Secret-Token` = bi�
 3. Tin là vote (ngắn, có từ khoá 1/0/đi/không...) hoặc lệnh nước (có chữ số) → ghi vào
    `teams/{mã nhóm}/zaloInbox/{messageId}` → app (máy quản trị) xử lý.
 4. Tin khác (câu hỏi có dấu "?", từ để hỏi, hoặc câu dài) → **AI trả lời ngay**:
-   - Ưu tiên **Google Gemini** (miễn phí, không cần thẻ): biến `GEMINI_API_KEY`, lấy tại https://aistudio.google.com/apikey.
-     Thứ tự mẫu: `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-flash-lite-latest` → `gemini-3.8-flash` → `gemini-flash-latest` → `gemma-4-31b-it`
-     (Flash-Lite có hạn mức ngày miễn phí cao hơn Flash nhiều lần; mỗi mẫu một hạn mức riêng nên hết mẫu này tự sang mẫu khác).
-     Đặt `GEMINI_MODEL` để ưu tiên một mẫu khác. Xem hạn mức thật của dự án tại https://aistudio.google.com/rate-limit.
-   - Dự phòng **Groq** (miễn phí, không cần thẻ, ~1.000 lượt/ngày với Llama 3.3 70B): đặt `GROQ_API_KEY` (lấy tại https://console.groq.com/keys),
-     tuỳ chọn `GROQ_MODEL`.
-   - Dự phòng **OpenAI** hoặc API tương thích nếu đặt `OPENAI_API_KEY` (có phí; `OPENAI_MODEL`, `OPENAI_BASE_URL`).
+   - Ưu tiên **Groq** (miễn phí, không cần thẻ, ~1.000 lượt/ngày): `GROQ_API_KEY` (https://console.groq.com/keys);
+     mẫu `openai/gpt-oss-120b` → `qwen/qwen3.8-27b` (đặt `GROQ_MODEL` để đổi).
+   - Rồi **Google Gemini** (miễn phí): `GEMINI_API_KEY` (https://aistudio.google.com/apikey); thứ tự `gemini-3.5-flash-lite` →
+     `gemini-3.1-flash-lite` → `gemini-flash-lite-latest` → `gemini-3.8-flash` → `gemini-flash-latest` → `gemma-4-31b-it`
+     (mỗi mẫu một hạn mức riêng, hết mẫu này tự sang mẫu khác; `GEMINI_MODEL` để ưu tiên). Hạn mức thật: https://aistudio.google.com/rate-limit.
+   - Cuối cùng **OpenAI** hoặc API tương thích nếu đặt `OPENAI_API_KEY` (có phí; `OPENAI_MODEL`, `OPENAI_BASE_URL`).
+   - Trong chat bot không bao giờ nói mẫu nào trả lời; log Vercel ghi `AI answered by ...`.
    - Bot được cấp ngữ cảnh: tên nhóm, buổi sắp tới (giờ, sân, số vote, hạn, tiền sân, người tạo), buổi gần nhất,
      bảng giá nước, các lệnh; trả lời tiếng Việt tối đa 3 câu, không bịa số liệu, không sửa được dữ liệu.
    - **Hết hạn mức**: bot báo vui vẻ kèm thời gian hỏi lại (lấy từ `retryDelay` của Google; hết lượt ngày thì

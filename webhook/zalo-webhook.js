@@ -1092,7 +1092,7 @@ async function chatReplyWork(env, teamId, chatId, text, fromName, token, botName
     '- Vote đi chơi: reply tin vote của bot với "1" (đi), "2" (đi 2 người, kèm 1 người đính kèm, tiền tính vào người vote) hoặc "0" (không đi); đổi ý thì reply lại. Vote hộ người khác: "@Tên 1" hoặc "@Tên 0", nhiều người trong một tin.',
     '- Xem danh sách nước và mã: gõ "nước". Ghi nước: "N1 2" hoặc "revive 2, suối 1"; "+1 N1" để cộng; nhập hộ: "@Tên N1 2".',
     '- Xem số dư cả nhóm: gõ "quỹ". "help" để xem hướng dẫn. Chi tiết tiền sân, tiền nước: app ' + APP_URL,
-    'Xưng "em", gọi người chơi là "anh/chị" hoặc tên. Không nhắc tới Google/Gemini/OpenAI.',
+    'Xưng "em", gọi người chơi là "anh/chị" hoặc tên. Không bao giờ nhắc mình là AI/mô hình nào (Google, Gemini, OpenAI, Groq, Llama, Qwen...); trả lời như một thành viên của nhóm.',
     'Chỉ dựa vào ngữ cảnh dưới đây; không biết thì nói không biết và chỉ sang app hoặc quản lý nhóm. Không bịa số liệu.',
     'Ngữ cảnh nhóm:',
     context,
@@ -1140,19 +1140,53 @@ function quotaHint(retryDelay, message) {
  * Trả về { answer } hoặc { quota: 'câu báo thời gian' } hoặc { error }.
  */
 /**
- * Hỏi AI miễn phí, lần lượt theo hạn mức còn lại:
- *  1. Gemini Flash-Lite (hạn mức ngày cao hơn Flash nhiều lần trên gói miễn phí),
- *  2. Gemini Flash (hạn mức thấp hơn),
- *  3. Gemma 4 (Google, hạn mức riêng; hiện hay trả 500 nên để cuối),
- *  4. Groq (Llama 3.3 70B, miễn phí không cần thẻ) nếu đặt GROQ_API_KEY,
- *  5. OpenAI hoặc bất kỳ API tương thích (OPENAI_BASE_URL) nếu đặt OPENAI_API_KEY.
- * Mỗi mẫu Gemini có hạn mức riêng → hết hạn mức một mẫu thì thử mẫu kế, không bỏ cuộc.
+ * Hỏi AI miễn phí, lần lượt theo hạn mức còn lại (người dùng chọn Groq trước):
+ *  1. Groq (GROQ_API_KEY, miễn phí không cần thẻ): gpt-oss-120b → qwen3.8-27b,
+ *  2. Gemini: Flash-Lite (hạn mức ngày cao) → Flash → Gemma,
+ *  3. OpenAI hoặc API tương thích (OPENAI_BASE_URL) nếu đặt OPENAI_API_KEY.
+ * Mỗi mẫu có hạn mức riêng → hết hạn mức mẫu này thì thử mẫu kế, hết sạch mới báo.
+ * Không bao giờ nói trong chat là mẫu nào trả lời (chỉ ghi log).
  */
+const GROQ_MODELS_DEFAULT = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
 const GEMINI_MODELS_DEFAULT = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest',
   'gemini-3.8-flash', 'gemini-flash-latest', 'gemma-4-31b-it'];
 
 async function askLLM(env, system, user) {
   let quotaMsg = null;
+
+  // Các API kiểu OpenAI (chat/completions): Groq trước, OpenAI/tương thích để cuối.
+  const openaiLike = async (name, key, base, models) => {
+    for (const model of models) {
+      try {
+        const res = await fetch(`${base}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model,
+            temperature: 0.4,
+            // Mẫu có "suy nghĩ" (gpt-oss) tốn token trước khi trả lời → để dư.
+            max_tokens: 700,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          }),
+        });
+        const data = await res.json();
+        const answer = (data?.choices?.[0]?.message?.content || '').trim();
+        if (res.ok && answer) { console.log(`AI answered by ${name}/${model}`); return answer; }
+        if (res.status === 429) quotaMsg = quotaMsg || quotaHint(null, data?.error?.message);
+        console.log(`${name} ${model} error`, res.status, JSON.stringify(data).slice(0, 200));
+      } catch (e) {
+        console.log(`${name} ${model} fetch failed`, String(e));
+      }
+    }
+    return '';
+  };
+
+  if (env.GROQ_API_KEY) {
+    const models = [...new Set([env.GROQ_MODEL, ...GROQ_MODELS_DEFAULT].filter(Boolean))];
+    const a = await openaiLike('Groq', env.GROQ_API_KEY, 'https://api.groq.com/openai/v1', models);
+    if (a) return { answer: a };
+  }
+
   if (env.GEMINI_API_KEY) {
     const models = [...new Set([env.GEMINI_MODEL, ...GEMINI_MODELS_DEFAULT].filter(Boolean))];
     for (const model of models) {
@@ -1194,31 +1228,11 @@ async function askLLM(env, system, user) {
       }
     }
   }
-  // Các API kiểu OpenAI: Groq (miễn phí) rồi OpenAI/tương thích.
-  const providers = [
-    env.GROQ_API_KEY && { name: 'Groq', key: env.GROQ_API_KEY, base: 'https://api.groq.com/openai/v1', model: env.GROQ_MODEL || 'llama-3.3-70b-versatile' },
-    env.OPENAI_API_KEY && { name: 'OpenAI', key: env.OPENAI_API_KEY, base: (env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''), model: env.OPENAI_MODEL || 'gpt-4o-mini' },
-  ].filter(Boolean);
-  for (const pv of providers) {
-    try {
-      const res = await fetch(`${pv.base}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pv.key}` },
-        body: JSON.stringify({
-          model: pv.model,
-          temperature: 0.4,
-          max_tokens: 300,
-          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        }),
-      });
-      const data = await res.json();
-      const answer = (data?.choices?.[0]?.message?.content || '').trim();
-      if (res.ok && answer) { console.log(`AI answered by ${pv.name}/${pv.model}`); return { answer }; }
-      if (res.status === 429) quotaMsg = quotaMsg || quotaHint(null, data?.error?.message);
-      console.log(`${pv.name} error`, res.status, JSON.stringify(data).slice(0, 300));
-    } catch (e) {
-      console.log(`${pv.name} fetch failed`, String(e));
-    }
+
+  if (env.OPENAI_API_KEY) {
+    const base = (env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const a = await openaiLike('OpenAI', env.OPENAI_API_KEY, base, [env.OPENAI_MODEL || 'gpt-4o-mini']);
+    if (a) return { answer: a };
   }
   return quotaMsg ? { quota: quotaMsg } : { error: 'unavailable' };
 }

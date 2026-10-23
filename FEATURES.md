@@ -82,7 +82,7 @@ Bot `Bot PickleBall JVB` trong nhóm. Bot chỉ thấy tin **reply** bot hoặc 
 | `N1 2` · `revive 2, suối 1` · `+1 N1` · `N1 0` | Bot báo "đã nhận lệnh nước" ngay; app (máy quản trị) ghi vào buổi gần nhất mình tham gia, tính lại tiền, rồi bot xác nhận kèm tổng tiền nước. Không phân biệt hoa thường, dấu. |
 | `@An N1 2 @Bình N2 1` | Nhập hộ nhiều người trong một tin; phần trước @ đầu tiên là của người gửi. Người chưa có trong buổi vẫn được ghi nước (trừ đúng người uống) nhưng **không** tự thêm vào danh sách chơi, bot nhắc quản lý thêm nếu họ có chơi. Thiếu số lượng ("N1 2 N2") thì bot báo lỗi rõ. |
 | `quỹ`, `số dư` | Bảng số dư cả nhóm: quỹ chung → **khối "Cần nạp thêm"** (dưới ngưỡng cảnh báo đặt trong app, kèm thông tin CK) → số dư từng người; có người sắp hết thì gửi kèm **ảnh QR** (tức thì). |
-| Câu hỏi khác | **AI (Gemini) trả lời** tức thì, biết buổi sắp tới, bảng giá nước, các lệnh; xưng "em"; không bịa số liệu. Hết hạn mức → báo vui vẻ kèm lúc hỏi lại. |
+| Câu hỏi khác | **AI trả lời** tức thì (Groq gpt-oss-120b → Gemini Flash-Lite/Flash, đều miễn phí, không nói trong chat mẫu nào trả lời), biết buổi sắp tới, bảng giá nước, các lệnh; xưng "em"; không bịa số liệu. Hết hạn mức → báo vui vẻ kèm lúc hỏi lại. |
 | Báo quỹ tự động | Mỗi **Thứ 6 8:00** (giờ Việt Nam) bot gửi bảng quỹ vào nhóm; có người dưới ngưỡng cảnh báo thì kèm thông tin CK + QR, không thì không gửi QR. |
 | Giục nạp quỹ | Nút **"Giục nạp quỹ qua Zalo (kèm QR)"** ở trang chính (cần mã bảo mật): bot gửi danh sách người sắp hết quỹ + cách chuyển khoản + ảnh QR lên nhóm. |
 | Kết quả vote khi hết hạn | Buổi đã gửi vote qua bot mà hết hạn → bot tự gửi **kết quả** (ai đi, mấy suất, ai không đi, vượt giới hạn) và nhắc **bỏ ghim** tin vote. GitHub Actions gọi `/cron-votes` mỗi 10 phút (Vercel miễn phí chỉ cho cron mỗi ngày). Tin vote có dòng nhắc quản lý **ghim** vì Zalo Bot API không tự ghim/bỏ ghim được. |
@@ -98,7 +98,7 @@ Cài đặt trong app → Zalo Bot: token, tìm nhóm (@bot trong nhóm), webhoo
 |---|---|
 | Deploy web | Push `main` → GitHub Actions → GitHub Pages. |
 | Deploy webhook | Push `main` → Vercel tự deploy; hoặc `npx vercel deploy --prod`. |
-| Biến môi trường Vercel | `ZALO_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY` (tuỳ chọn), `TEAM_ID`, `CRON_SECRET`, `PUBLIC_BASE_URL` (tuỳ chọn `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). |
+| Biến môi trường Vercel | `ZALO_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `TEAM_ID`, `CRON_SECRET`, `PUBLIC_BASE_URL` (tuỳ chọn `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). |
 | Rules Firestore | `firebase deploy --only firestore:rules`. |
 | Test | `flutter test`: test logic thuần (chia tiền, hạn vote/giới hạn/đính kèm, phân tích lệnh Zalo, nhập tiền). Không dùng Firestore giả lập. |
 
@@ -107,5 +107,5 @@ Cài đặt trong app → Zalo Bot: token, tìm nhóm (@bot trong nhóm), webhoo
 - Zalo Bot không tạo được bình chọn gốc của Zalo, không có nút bấm, không sửa/xoá tin đã gửi, **không ghim/bỏ ghim, không reply vào tin cụ thể** (đã thử, API trả 404), chỉ thấy reply/@mention.
 - Xử lý vote/nước từ Zalo chỉ chạy khi có máy đang mở khoá quản trị (tin chờ trong hộp thư, không mất). Help/nước/quỹ/AI thì trả lời ngay không cần app.
 - Gói Vercel miễn phí có thể lệch giờ cron trong khung giờ đã đặt.
-- Hạn mức Gemini miễn phí có giới hạn theo phút/ngày; bot dùng Flash-Lite (hạn mức cao hơn) và tự chuyển mẫu/nhà cung cấp (Gemma, Flash, Groq nếu có khoá) khi chạm; hết sạch mới báo.
+- Hạn mức Gemini miễn phí có giới hạn theo phút/ngày; bot dùng Groq trước (~1.000 lượt/ngày), rồi Gemini Flash-Lite/Flash/Gemma; hết sạch mới báo.
 - Xoá hẳn người chơi sẽ chia lại tiền sân/chi phí họ đang gánh cho người còn lại; muốn giữ lịch sử thì tắt "Đang hoạt động" thay vì xoá.
