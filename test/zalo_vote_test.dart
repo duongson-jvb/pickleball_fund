@@ -85,4 +85,13 @@ void main() {
       expect(ZaloVoteSync.pickTarget(sessions)?.id, 'soon');
     });
   });
+
+  test('câu hỏi có từ khoá vote không phải vote: để AI trả lời', () {
+    for (final t in ['sân mấy người chơi em?', 'có đi không?', 'mai chơi ở đâu', 'ai đi không', 'đi chưa', 'ok?']) {
+      expect(ZaloVoteSync.parseVote(t), isNull, reason: t);
+    }
+    // Số thuần vẫn là vote.
+    expect(ZaloVoteSync.parseVote('1'), isTrue);
+    expect(ZaloVoteSync.parseVote('đi'), isTrue);
+  });
 }

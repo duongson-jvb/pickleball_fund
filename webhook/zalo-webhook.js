@@ -464,6 +464,8 @@ function readVoteShapeInner(t, text) {
   }
   const hasKeyword = VOTE_NO_RE.test(words) || VOTE_YES_RE.test(words);
   if (!hasKeyword) return { definite: false, maybe: false, error: null };
+  // Câu hỏi ("sân mấy người chơi em?", "có đi không?") không phải vote → để AI trả lời.
+  if (/\?/.test(text) || QUESTION_RE.test(words)) return { definite: false, maybe: false, error: null };
   const definite = words.split(' ').length <= 5;
   // "đi 2" = đi 2 người; "đi 10" là gõ sai, phải báo giống bên app.
   if (definite && !VOTE_NO_RE.test(words)) {

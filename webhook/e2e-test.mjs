@@ -174,6 +174,8 @@ await check('xem danh sách nước', { text: 'nước' }, { reply: 'BẢNG GIÁ
 await check('hướng dẫn', { text: '@bot help' }, { reply: 'BOT QUỸ PICKLEBALL' });
 await check('"vote" → danh sách vote đang mở', { text: '@Bot PickleBall JVB vote' }, { reply: 'VOTE ĐANG MỞ' });
 await check('chuyện phiếm → AI', { text: 'thời tiết đẹp nhỉ' }, { reply: 'Dạ em đây' });
+await check('câu hỏi có từ khoá vote "sân mấy người chơi em?" → AI', { text: 'sân mấy người chơi em?' }, { reply: 'Dạ em đây' });
+await check('"có đi không?" → AI, không ghi vote', { text: 'có đi không?' }, { reply: 'Dạ em đây' });
 await check('câu dài có "oke" KHÔNG phải vote', { text: 'anh Sơn bảo anh oke rồi em' }, { reply: 'Dạ em đây' });
 await check('câu có số "100k" → AI', { text: 'tăng cho anh Tiến 100k tiền quỹ' }, { reply: 'Dạ em đây' });
 await check('chỉ @bot, không nội dung', { text: '@Bot PickleBall JVB' }, { reply: 'Em đây' });

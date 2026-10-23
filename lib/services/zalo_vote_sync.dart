@@ -42,6 +42,10 @@ class ZaloVoteSync {
   static final _yesPattern = RegExp(
       r'(^|\s)(1|\+1|di|co|ok|oke|okie|okay|yes|y|tham gia|join|choi|dk|dang ky|chot|len|vao|count me)(\s|$)');
 
+  /// Từ để hỏi: câu chứa chúng là câu hỏi, không phải vote (khớp QUESTION_RE bên webhook).
+  static final _questionPattern = RegExp(
+      r'(^|\s)(gi|dau|khi nao|luc nao|may gio|bao nhieu|bao gio|sao|the nao|tai sao|ai|nao|co ai|phai khong|duoc khong|chua)(\s|$)');
+
   /// Số suất tối đa một người được đăng ký (bản thân + người đính kèm).
   /// Gõ số lớn hơn bị coi là nhập sai, bot báo lại thay vì tính bừa.
   static const maxVoteSeats = 4;
@@ -78,6 +82,10 @@ class ZaloVoteSync {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     if (_noPattern.hasMatch(words) || _yesPattern.hasMatch(words)) {
+      // Câu hỏi ("sân mấy người chơi em?", "có đi không?") không phải vote.
+      if (text.contains('?') || _questionPattern.hasMatch(words)) {
+        return const VoteReading(null);
+      }
       // Câu quá dài thì không chắc là vote → để quản lý quyết định.
       if (words.split(' ').length > _maxWordsForKeywordVote) {
         return const VoteReading(null);
