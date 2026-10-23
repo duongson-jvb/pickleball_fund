@@ -1140,9 +1140,9 @@ function quotaHint(retryDelay, message) {
  * Trả về { answer } hoặc { quota: 'câu báo thời gian' } hoặc { error }.
  */
 /**
- * Hỏi AI miễn phí, lần lượt theo hạn mức còn lại (người dùng chọn Groq trước):
- *  1. Groq (GROQ_API_KEY, miễn phí không cần thẻ): gpt-oss-120b → qwen3.8-27b,
- *  2. Gemini: Flash-Lite (hạn mức ngày cao) → Flash → Gemma,
+ * Hỏi AI miễn phí, lần lượt theo hạn mức còn lại (người dùng chọn Gemini trước):
+ *  1. Gemini: Flash-Lite (hạn mức ngày cao) → Flash → Gemma,
+ *  2. Groq (GROQ_API_KEY, miễn phí không cần thẻ): gpt-oss-120b → qwen3.8-27b,
  *  3. OpenAI hoặc API tương thích (OPENAI_BASE_URL) nếu đặt OPENAI_API_KEY.
  * Mỗi mẫu có hạn mức riêng → hết hạn mức mẫu này thì thử mẫu kế, hết sạch mới báo.
  * Không bao giờ nói trong chat là mẫu nào trả lời (chỉ ghi log).
@@ -1180,12 +1180,6 @@ async function askLLM(env, system, user) {
     }
     return '';
   };
-
-  if (env.GROQ_API_KEY) {
-    const models = [...new Set([env.GROQ_MODEL, ...GROQ_MODELS_DEFAULT].filter(Boolean))];
-    const a = await openaiLike('Groq', env.GROQ_API_KEY, 'https://api.groq.com/openai/v1', models);
-    if (a) return { answer: a };
-  }
 
   if (env.GEMINI_API_KEY) {
     const models = [...new Set([env.GEMINI_MODEL, ...GEMINI_MODELS_DEFAULT].filter(Boolean))];
@@ -1227,6 +1221,13 @@ async function askLLM(env, system, user) {
         continue;
       }
     }
+  }
+
+  // Gemini hết hạn mức/lỗi → Groq (miễn phí) rồi mới tới OpenAI.
+  if (env.GROQ_API_KEY) {
+    const models = [...new Set([env.GROQ_MODEL, ...GROQ_MODELS_DEFAULT].filter(Boolean))];
+    const a = await openaiLike('Groq', env.GROQ_API_KEY, 'https://api.groq.com/openai/v1', models);
+    if (a) return { answer: a };
   }
 
   if (env.OPENAI_API_KEY) {
