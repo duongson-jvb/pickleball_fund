@@ -98,7 +98,7 @@ Cài đặt trong app → Zalo Bot: token, tìm nhóm (@bot trong nhóm), webhoo
 |---|---|
 | Deploy web | Push `main` → GitHub Actions → GitHub Pages. |
 | Deploy webhook | Push `main` → Vercel tự deploy; hoặc `npx vercel deploy --prod`. |
-| Biến môi trường Vercel | `ZALO_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `GEMINI_API_KEY`, `TEAM_ID`, `CRON_SECRET`, `PUBLIC_BASE_URL` (tuỳ chọn `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). |
+| Biến môi trường Vercel | `ZALO_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY` (tuỳ chọn), `TEAM_ID`, `CRON_SECRET`, `PUBLIC_BASE_URL` (tuỳ chọn `GEMINI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). |
 | Rules Firestore | `firebase deploy --only firestore:rules`. |
 | Test | `flutter test`: test logic thuần (chia tiền, hạn vote/giới hạn/đính kèm, phân tích lệnh Zalo, nhập tiền). Không dùng Firestore giả lập. |
 
@@ -107,5 +107,5 @@ Cài đặt trong app → Zalo Bot: token, tìm nhóm (@bot trong nhóm), webhoo
 - Zalo Bot không tạo được bình chọn gốc của Zalo, không có nút bấm, không sửa/xoá tin đã gửi, **không ghim/bỏ ghim, không reply vào tin cụ thể** (đã thử, API trả 404), chỉ thấy reply/@mention.
 - Xử lý vote/nước từ Zalo chỉ chạy khi có máy đang mở khoá quản trị (tin chờ trong hộp thư, không mất). Help/nước/quỹ/AI thì trả lời ngay không cần app.
 - Gói Vercel miễn phí có thể lệch giờ cron trong khung giờ đã đặt.
-- Hạn mức Gemini miễn phí có giới hạn theo phút/ngày; bot tự báo khi chạm.
+- Hạn mức Gemini miễn phí có giới hạn theo phút/ngày; bot dùng Flash-Lite (hạn mức cao hơn) và tự chuyển mẫu/nhà cung cấp (Gemma, Flash, Groq nếu có khoá) khi chạm; hết sạch mới báo.
 - Xoá hẳn người chơi sẽ chia lại tiền sân/chi phí họ đang gánh cho người còn lại; muốn giữ lịch sử thì tắt "Đang hoạt động" thay vì xoá.

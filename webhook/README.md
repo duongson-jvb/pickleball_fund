@@ -19,8 +19,12 @@ Cả hai đường POST đều yêu cầu header `X-Bot-Api-Secret-Token` = bi�
    `teams/{mã nhóm}/zaloInbox/{messageId}` → app (máy quản trị) xử lý.
 4. Tin khác (câu hỏi có dấu "?", từ để hỏi, hoặc câu dài) → **AI trả lời ngay**:
    - Ưu tiên **Google Gemini** (miễn phí, không cần thẻ): biến `GEMINI_API_KEY`, lấy tại https://aistudio.google.com/apikey.
-     Mẫu mặc định `gemini-2.5-flash`, tự lùi về `gemini-2.0-flash` / `gemini-1.5-flash` nếu không có; đổi bằng `GEMINI_MODEL`.
-   - Dự phòng **OpenAI** nếu đặt `OPENAI_API_KEY` (có phí; mẫu `OPENAI_MODEL`, mặc định `gpt-4o-mini`).
+     Thứ tự mẫu: `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-flash-lite-latest` → `gemini-3.8-flash` → `gemini-flash-latest` → `gemma-4-31b-it`
+     (Flash-Lite có hạn mức ngày miễn phí cao hơn Flash nhiều lần; mỗi mẫu một hạn mức riêng nên hết mẫu này tự sang mẫu khác).
+     Đặt `GEMINI_MODEL` để ưu tiên một mẫu khác. Xem hạn mức thật của dự án tại https://aistudio.google.com/rate-limit.
+   - Dự phòng **Groq** (miễn phí, không cần thẻ, ~1.000 lượt/ngày với Llama 3.3 70B): đặt `GROQ_API_KEY` (lấy tại https://console.groq.com/keys),
+     tuỳ chọn `GROQ_MODEL`.
+   - Dự phòng **OpenAI** hoặc API tương thích nếu đặt `OPENAI_API_KEY` (có phí; `OPENAI_MODEL`, `OPENAI_BASE_URL`).
    - Bot được cấp ngữ cảnh: tên nhóm, buổi sắp tới (giờ, sân, số vote, hạn, tiền sân, người tạo), buổi gần nhất,
      bảng giá nước, các lệnh; trả lời tiếng Việt tối đa 3 câu, không bịa số liệu, không sửa được dữ liệu.
    - **Hết hạn mức**: bot báo vui vẻ kèm thời gian hỏi lại (lấy từ `retryDelay` của Google; hết lượt ngày thì

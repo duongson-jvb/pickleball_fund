@@ -274,7 +274,7 @@ export default {
     }
 
     // ---- Còn lại là câu hỏi / trò chuyện → AI trả lời (không ghi hộp thư). AI lỗi vẫn trả lời.
-    if (env.GEMINI_API_KEY || env.OPENAI_API_KEY) {
+    if (env.GEMINI_API_KEY || env.GROQ_API_KEY || env.OPENAI_API_KEY) {
       const r = await maybeChatReply(env, teamId, chat, text, fromName, quote);
       if (r) return r;
     }
@@ -1139,69 +1139,85 @@ function quotaHint(retryDelay, message) {
  * Hỏi mô hình ngôn ngữ: ưu tiên Gemini (miễn phí), dự phòng OpenAI nếu có key.
  * Trả về { answer } hoặc { quota: 'câu báo thời gian' } hoặc { error }.
  */
+/**
+ * Hỏi AI miễn phí, lần lượt theo hạn mức còn lại:
+ *  1. Gemini Flash-Lite (hạn mức ngày cao hơn Flash nhiều lần trên gói miễn phí),
+ *  2. Gemini Flash (hạn mức thấp hơn),
+ *  3. Gemma 4 (Google, hạn mức riêng; hiện hay trả 500 nên để cuối),
+ *  4. Groq (Llama 3.3 70B, miễn phí không cần thẻ) nếu đặt GROQ_API_KEY,
+ *  5. OpenAI hoặc bất kỳ API tương thích (OPENAI_BASE_URL) nếu đặt OPENAI_API_KEY.
+ * Mỗi mẫu Gemini có hạn mức riêng → hết hạn mức một mẫu thì thử mẫu kế, không bỏ cuộc.
+ */
+const GEMINI_MODELS_DEFAULT = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest',
+  'gemini-3.8-flash', 'gemini-flash-latest', 'gemma-4-31b-it'];
+
 async function askLLM(env, system, user) {
   let quotaMsg = null;
   if (env.GEMINI_API_KEY) {
-    const models = [...new Set([env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'].filter(Boolean))];
+    const models = [...new Set([env.GEMINI_MODEL, ...GEMINI_MODELS_DEFAULT].filter(Boolean))];
     for (const model of models) {
       try {
+        const isGemma = model.startsWith('gemma');
+        // Gemma qua Gemini API không nhận system_instruction → gộp vào tin người dùng.
+        const body = isGemma
+          ? { contents: [{ role: 'user', parts: [{ text: `${system}\n\nTin nhắn: ${user}` }] }],
+              generationConfig: { temperature: 0.4, maxOutputTokens: 512 } }
+          : { system_instruction: { parts: [{ text: system }] },
+              contents: [{ role: 'user', parts: [{ text: user }] }],
+              generationConfig: { temperature: 0.4, maxOutputTokens: 1024 } };
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: system }] },
-            contents: [{ role: 'user', parts: [{ text: user }] }],
-            generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
-          }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (res.ok) {
           const parts = data?.candidates?.[0]?.content?.parts || [];
-          const answer = parts.map((p) => p.text || '').join('').trim();
-          if (answer) return { answer };
-          console.log('Gemini empty answer', JSON.stringify(data).slice(0, 300));
-          return { error: 'empty' };
-        }
-        if (res.status === 404) { console.log('Gemini model not found', model); continue; }
-        if (res.status === 503) {
-          quotaMsg = 'Em đang quá tải một chút, thử lại sau 1 phút nhé.';
-          console.log('Gemini 503 high demand', model);
-          continue; // thử mẫu khác
+          const answer = parts.filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
+          if (answer) { console.log(`AI answered by ${model}`); return { answer }; }
+          console.log('Gemini empty answer', model, JSON.stringify(data).slice(0, 300));
+          continue;
         }
         if (res.status === 429) {
           const details = data?.error?.details || [];
           const retry = details.find((d) => d.retryDelay)?.retryDelay;
-          quotaMsg = quotaHint(retry, data?.error?.message);
-          console.log('Gemini quota', data?.error?.message, retry);
-          break;
+          quotaMsg = quotaMsg || quotaHint(retry, data?.error?.message);
+          console.log('Gemini quota', model, data?.error?.message, retry);
+          continue; // mẫu khác còn hạn mức riêng
         }
-        console.log('Gemini error', res.status, JSON.stringify(data).slice(0, 300));
-        break;
+        if (res.status === 503) quotaMsg = quotaMsg || 'Em đang quá tải một chút, thử lại sau 1 phút nhé.';
+        console.log('Gemini error', model, res.status, JSON.stringify(data).slice(0, 200));
+        continue;
       } catch (e) {
-        console.log('Gemini fetch failed', String(e));
-        break;
+        console.log('Gemini fetch failed', model, String(e));
+        continue;
       }
     }
   }
-  if (env.OPENAI_API_KEY) {
+  // Các API kiểu OpenAI: Groq (miễn phí) rồi OpenAI/tương thích.
+  const providers = [
+    env.GROQ_API_KEY && { name: 'Groq', key: env.GROQ_API_KEY, base: 'https://api.groq.com/openai/v1', model: env.GROQ_MODEL || 'llama-3.3-70b-versatile' },
+    env.OPENAI_API_KEY && { name: 'OpenAI', key: env.OPENAI_API_KEY, base: (env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''), model: env.OPENAI_MODEL || 'gpt-4o-mini' },
+  ].filter(Boolean);
+  for (const pv of providers) {
     try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      const res = await fetch(`${pv.base}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.OPENAI_API_KEY}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pv.key}` },
         body: JSON.stringify({
-          model: env.OPENAI_MODEL || 'gpt-4o-mini',
+          model: pv.model,
           temperature: 0.4,
-          max_tokens: 220,
+          max_tokens: 300,
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         }),
       });
       const data = await res.json();
       const answer = (data?.choices?.[0]?.message?.content || '').trim();
-      if (res.ok && answer) return { answer };
+      if (res.ok && answer) { console.log(`AI answered by ${pv.name}/${pv.model}`); return { answer }; }
       if (res.status === 429) quotaMsg = quotaMsg || quotaHint(null, data?.error?.message);
-      console.log('OpenAI error', res.status, JSON.stringify(data).slice(0, 300));
+      console.log(`${pv.name} error`, res.status, JSON.stringify(data).slice(0, 300));
     } catch (e) {
-      console.log('OpenAI fetch failed', String(e));
+      console.log(`${pv.name} fetch failed`, String(e));
     }
   }
   return quotaMsg ? { quota: quotaMsg } : { error: 'unavailable' };
