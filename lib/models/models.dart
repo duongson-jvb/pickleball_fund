@@ -416,8 +416,30 @@ class Session {
   bool get isVoteOpen => status == SessionStatus.voting && !voteExpired;
 
   /// Số chỗ đã giữ theo vote "đi" (mỗi người + số đính kèm của họ).
+  /// Những người đang giữ chỗ: người vote "đi" CỘNG người quản lý thêm thẳng
+  /// vào danh sách chơi. Buổi đã chốt thì chỉ còn danh sách chơi - lúc đó
+  /// `votes` vẫn giữ cả người bị cắt vì hết chỗ, đếm theo đó sẽ ra số ảo.
+  ///
+  /// Trước đây chỗ này chỉ đếm `votes`, nên người được thêm tay không chiếm
+  /// suất nào: app tưởng còn chỗ, nhận thêm vote, rồi lúc chốt người vote sau
+  /// bị cắt dù bot đã xác nhận "đã có chỗ".
+  /// Thứ tự giống [playersForClosing] để danh sách bot báo lên nhóm trùng với
+  /// thứ tự ưu tiên khi phải cắt bớt vì hết chỗ.
+  List<String> get seatHolders {
+    if (status == SessionStatus.closed) return playerIds;
+    final out = [...playerIds];
+    for (final id in votedYesByTime) {
+      if (!out.contains(id)) out.add(id);
+    }
+    return out;
+  }
+
+  /// Người quản lý thêm thẳng vào danh sách, không qua vote.
+  List<String> get addedWithoutVote =>
+      [for (final id in playerIds) if (votes[id] != true) id];
+
   int get seatsTaken =>
-      votedYes.fold(0, (acc, id) => acc + 1 + (companions[id] ?? 0));
+      seatHolders.fold(0, (acc, id) => acc + 1 + (companions[id] ?? 0));
 
   /// Đã đủ số người (theo vote "đi" + đính kèm) chưa.
   bool get isFull => maxPlayers != null && seatsTaken >= maxPlayers!;

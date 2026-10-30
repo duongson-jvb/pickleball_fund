@@ -165,13 +165,18 @@ class ShareService {
       s.maxPlayers != null ? '👥 Giới hạn: ${s.maxPlayers} suất' : '👥 Không giới hạn số người',
       if (s.createdByName.isNotEmpty) '👤 Người tạo: ${s.createdByName}',
     ].join('\n');
-    final yes = s.votedYes;
-    final voted = yes.isEmpty
+    // Liệt kê đúng những người đang giữ chỗ (gồm cả người quản lý thêm thẳng
+    // vào danh sách), để số ở tiêu đề khớp với số dòng bên dưới.
+    final holders = s.seatHolders;
+    final added = s.addedWithoutVote.toSet();
+    final voted = holders.isEmpty
         ? '✅ Chưa ai vote'
         : [
-            '✅ ĐÃ VOTE ĐI (${s.seatsTaken}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} suất)',
-            for (final pid in yes)
-              '• ${store.playerName(pid)}${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)})' : ''}',
+            '✅ ĐÃ CÓ CHỖ (${s.seatsTaken}${s.maxPlayers != null ? '/${s.maxPlayers}' : ''} suất)',
+            for (final pid in holders)
+              '• ${store.playerName(pid)}'
+              '${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)})' : ''}'
+              '${added.contains(pid) ? ' · quản lý thêm' : ''}',
           ].join('\n');
     const guide = '👉 Reply tin này: 1 = đi · 2 = đi 2 người · 0 = không · "@An 1" vote hộ\n'
         '📌 Quản lý ghim tin này cho dễ thấy. Hết hạn bot tự báo kết quả.';
@@ -180,18 +185,26 @@ class ShareService {
 
   /// Kết quả vote khi hết hạn (app gửi ở chế độ không webhook; webhook tự gửi khi có).
   static String voteResultText(TeamStore store, Session s) {
-    final yes = s.votedYes;
-    final no = s.votes.entries.where((e) => !e.value).map((e) => store.playerName(e.key)).toList();
+    final holders = s.seatHolders;
+    final added = s.addedWithoutVote.toSet();
+    // Người quản lý đã đưa vào danh sách chơi thì coi như có đi, dù vote cũ là
+    // "không" - nếu không họ sẽ xuất hiện ở cả hai danh sách trong một tin.
+    final no = s.votes.entries
+        .where((e) => !e.value && !s.playerIds.contains(e.key))
+        .map((e) => store.playerName(e.key))
+        .toList();
     final cap = s.maxPlayers != null ? '/${s.maxPlayers}' : '';
     final blocks = [
       '🔒 HẾT HẠN VOTE · ${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
       '🕕 ${fmtWeekday(s.date)} · ${_hm(s.date)}${s.location.isNotEmpty ? '\n📍 ${s.location}' : ''}',
-      yes.isEmpty
+      holders.isEmpty
           ? '😢 Chưa có ai vote đi.'
           : [
               '✅ ĐI (${s.seatsTaken}$cap suất)',
-              for (final pid in yes)
-                '• ${store.playerName(pid)}${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)} đính kèm)' : ''}',
+              for (final pid in holders)
+                '• ${store.playerName(pid)}'
+                '${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)} đính kèm)' : ''}'
+                '${added.contains(pid) ? ' · quản lý thêm' : ''}',
             ].join('\n'),
       if (no.isNotEmpty) '❌ Không đi: ${no.join(', ')}',
       if (s.maxPlayers != null && s.seatsTaken > s.maxPlayers!)
