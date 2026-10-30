@@ -505,9 +505,21 @@ function parseSessionDoc(d) {
   };
 }
 
+/**
+ * Số suất đang bị giữ. Đếm cả người quản lý thêm thẳng vào danh sách chơi, vì
+ * họ cũng chiếm chỗ; buổi đã chốt thì chỉ đếm danh sách chơi (lúc đó `votes`
+ * vẫn giữ cả người bị cắt vì hết chỗ nên đếm theo đó sẽ ra số ảo).
+ *
+ * Phải khớp với Session.seatsTaken bên app - lệch nhau là bot báo một đằng,
+ * app tính một nẻo.
+ */
 function seatsTaken(sess) {
+  const players = sess.playerIds || [];
+  const held = sess.status === 'closed'
+    ? new Set(players)
+    : new Set([...Object.entries(sess.votes).filter(([, v]) => v).map(([pid]) => pid), ...players]);
   let n = 0;
-  for (const [pid, v] of Object.entries(sess.votes)) if (v) n += 1 + (sess.companions[pid] || 0);
+  for (const pid of held) n += 1 + (sess.companions[pid] || 0);
   return n;
 }
 
@@ -653,11 +665,17 @@ async function recordVotes(env, teamId, sess, entries, dateMs) {
   const companions = { ...sess.companions };
   const lines = [];
   const accepted = [];
+  // Bản đếm phải mang theo playerIds/status, nếu không seatsTaken lại quay về
+  // chỉ đếm votes và lệch với con số app hiển thị.
+  const snapshot = () => ({ votes, companions, playerIds: sess.playerIds, status: sess.status });
+  const players = new Set(sess.playerIds || []);
   for (const e of entries) {
     const pid = e.player.id;
-    const mine = votes[pid] ? 1 + (companions[pid] || 0) : 0;
+    // Suất người này ĐANG giữ: đã vote đi, hoặc đã nằm trong danh sách chơi.
+    // Thiếu vế sau thì người được quản lý thêm tay bị đếm hai lần khi họ vote.
+    const mine = (votes[pid] || players.has(pid)) ? 1 + (companions[pid] || 0) : 0;
     if (e.vote && sess.maxPlayers != null) {
-      const taken = seatsTaken({ votes, companions });
+      const taken = seatsTaken(snapshot());
       if (taken - mine + e.seats > sess.maxPlayers) {
         const left = Math.max(0, sess.maxPlayers - (taken - mine));
         lines.push(`😢 ${e.player.name}: HẾT CHỖ · ${label}\n👥 Còn ${left}/${sess.maxPlayers} chỗ, chưa ghi được ${e.seats} suất. ` +
@@ -667,7 +685,7 @@ async function recordVotes(env, teamId, sess, entries, dateMs) {
     }
     votes[pid] = e.vote;
     if (e.vote && e.seats > 1) companions[pid] = e.seats - 1; else delete companions[pid];
-    const after = seatsTaken({ votes, companions });
+    const after = seatsTaken(snapshot());
     const by = e.by ? ` · ${e.by} vote hộ` : '';
     const who = `${e.player.name}${e.vote && e.seats > 1 ? ` +${e.seats - 1} đính kèm` : ''}`;
     const left = sess.maxPlayers != null ? ` · còn ${Math.max(0, sess.maxPlayers - after)} chỗ` : '';

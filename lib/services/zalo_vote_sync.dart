@@ -417,12 +417,16 @@ class ZaloVoteSync {
       final lines = <String>[]; // trả lời cho tin này
       final label = session.title.isEmpty ? 'buổi chơi' : '"${session.title}"';
       final cap = session.maxPlayers != null ? '/${session.maxPlayers}' : '';
+      // Đếm cả người quản lý đã thêm thẳng vào danh sách chơi: họ cũng chiếm
+      // chỗ. Chỉ đếm theo `votes` thì app tưởng còn chỗ, nhận thừa vote rồi
+      // lúc chốt lại cắt mất người đã được bot xác nhận.
       int seatsNow() {
-        var n = 0;
-        votes.forEach((pid, v) {
-          if (v) n += 1 + (companions[pid] ?? 0);
-        });
-        return n;
+        final held = <String>{
+          for (final e in votes.entries)
+            if (e.value) e.key,
+          ...session.playerIds,
+        };
+        return held.fold(0, (n, pid) => n + 1 + (companions[pid] ?? 0));
       }
 
       for (final a in parts) {
@@ -456,7 +460,12 @@ class ZaloVoteSync {
         final count = vote ? reading.seats : 0;
         if (vote && session.maxPlayers != null) {
           final seats = seatsNow();
-          final mine = (player != null && votes[player.id] == true)
+          // Suất người này ĐANG giữ: đã vote đi, hoặc đã nằm trong danh sách
+          // chơi. Thiếu vế sau thì người được quản lý thêm tay bị đếm hai lần
+          // khi chính họ vote, và bị báo hết chỗ oan.
+          final mine = (player != null &&
+                  (votes[player.id] == true ||
+                      session.playerIds.contains(player.id)))
               ? 1 + (companions[player.id] ?? 0)
               : 0;
           if (seats - mine + count > session.maxPlayers!) {

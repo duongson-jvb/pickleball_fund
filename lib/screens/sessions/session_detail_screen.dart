@@ -648,7 +648,9 @@ class _VoteTabState extends State<_VoteTab> {
                       showSnack(context, 'Đã hết hạn vote (${fmtDateTime(s.effectiveVoteDeadline)})');
                       return;
                     }
-                    if (vote && s.isFull && s.votes[p.id] != true) {
+                    // Người đã giữ chỗ (đã vote đi, hoặc quản lý đã thêm vào
+                    // danh sách) thì vote "đi" không thêm suất nào → đừng chặn.
+                    if (vote && s.isFull && !s.seatHolders.contains(p.id)) {
                       showSnack(context, 'Đã đủ ${s.maxPlayers} người, không nhận thêm');
                       return;
                     }
@@ -733,6 +735,7 @@ class _PlayersTab extends StatelessWidget {
                 ),
                 if (s.courtFee > 0) ...[
                   Text('• ${st.participants} người (${s.playerIds.length} người chơi'
+                      '${s.totalCompanions > 0 ? ' + ${s.totalCompanions} đính kèm' : ''}'
                       '${s.guestCount > 0 ? ' + ${s.guestCount} khách' : ''}) '
                       '→ ${vnd(st.perHead)}/người'),
                   Text('• Quỹ chung trả: ${vnd(st.commonUsed)} '
