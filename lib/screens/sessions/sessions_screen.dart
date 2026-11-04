@@ -49,7 +49,7 @@ class _SessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = session;
     final voting = s.status == SessionStatus.voting;
-    final st = s.settlement;
+    final st = TeamScope.of(context).settlementOf(s);
     return Card(
       child: ListTile(
         leading: CircleAvatar(
@@ -57,7 +57,8 @@ class _SessionTile extends StatelessWidget {
           child: Icon(voting ? Icons.how_to_vote : Icons.sports_tennis,
               color: voting ? Colors.orange.shade800 : Colors.teal.shade800),
         ),
-        title: Text(s.title.isEmpty ? fmtWeekday(s.date) : s.title),
+        title: Text('${voting && s.codeLabel.isNotEmpty ? '[${s.codeLabel}] ' : ''}'
+            '${s.title.isEmpty ? fmtWeekday(s.date) : s.title}'),
         subtitle: Text([
           fmtWeekday(s.date),
           if (s.location.isNotEmpty) s.location,

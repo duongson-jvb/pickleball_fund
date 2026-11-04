@@ -194,9 +194,11 @@ export default {
     if (!isDrinkCommand && hasOtherMention(text, botName)) {
       const players = await loadPlayers(env, teamId);
       const proxy = parseProxyVotesJs(text, botName, players);
-      if (proxy) {
-        const open = await openVoteSession(env, teamId);
+      // Không phần nào là vote ("@Bình tham") → câu nói thường, để AI trả lời.
+      if (proxy && proxy.some((a) => a.error || a.vote != null)) {
+        const open = await openVoteSession(env, teamId, text);
         if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token, quote);
+        if (open.unknownCode) return replyText(env, teamId, chat, unknownCodeText(open.unknownCode, open.open), token, quote);
         if (open.expired) return replyText(env, teamId, chat, expiredText(open), token, quote);
         const sender = matchPlayerJs(players, fromId, fromName);
         const lines = [];
@@ -205,6 +207,7 @@ export default {
         for (const a of proxy) {
           const who = a.isSelf ? (sender?.name || fromName || 'bạn') : (a.player?.name || a.nameText);
           if (a.error) { lines.push(a.isSelf ? a.error : `❓ ${who}: ${a.error}`); continue; }
+          if (a.vote == null) continue; // từ lẻ không phải vote: bỏ qua như bên app
           if (a.isSelf) {
             if (!sender) { selfUnknown = a; continue; }
             entries.push({ player: sender, vote: a.vote, seats: a.seats, by: '' });
@@ -219,12 +222,15 @@ export default {
         lines.push(...r.lines);
         console.log(`vote hộ (${entries.length}) → ${r.status}`);
         const writeFailed = !['recorded', 'full', 'none'].includes(r.status);
+        // Tin vào hộp thư mang theo buổi đã chọn: app xử lý sau (có khi buổi đã
+        // chốt, buổi khác đang mở) thì vẫn áp đúng buổi này, không trôi sang buổi khác.
+        const forSession = { ...inboxFields, sessionId: s(open.id) };
         if (writeFailed) {
-          const saved = await saveInbox(env, teamId, messageId, inboxFields); // app ghi hộ toàn bộ
+          const saved = await saveInbox(env, teamId, messageId, forSession); // app ghi hộ toàn bộ
           if (!saved.ok) return saved.response;
         } else if (selfUnknown) {
           // Chỉ phần vote của chính người gửi (chưa có tên) vào hộp thư, tránh ghi lặp.
-          const saved = await saveInbox(env, teamId, messageId, { ...inboxFields, text: s(selfUnknown.rawText) });
+          const saved = await saveInbox(env, teamId, messageId, { ...forSession, text: s(selfUnknown.rawText) });
           if (!saved.ok) return saved.response;
           lines.push(`📝 Đã nhận vote của ${fromName || 'bạn'}\nTên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`);
         }
@@ -251,14 +257,17 @@ export default {
 
     // ---- Vote chắc chắn ("1", "2", "0", "đi", "không đi"...): ghi THẲNG vào buổi và xác nhận.
     if (voteShape.definite) {
-      const open = await openVoteSession(env, teamId);
+      const open = await openVoteSession(env, teamId, text);
       if (!open) return replyText(env, teamId, chat, NO_OPEN_VOTE_TEXT, token, quote);
+      if (open.unknownCode) return replyText(env, teamId, chat, unknownCodeText(open.unknownCode, open.open), token, quote);
       if (open.expired) return replyText(env, teamId, chat, expiredText(open), token, quote);
       const players = await loadPlayers(env, teamId);
       const player = matchPlayerJs(players, fromId, fromName);
+      // Tin vào hộp thư mang theo buổi đã chọn (xem phần vote hộ ở trên).
+      const forSession = { ...inboxFields, sessionId: s(open.id) };
       if (!player) {
         // Người chưa có trong danh sách: app sẽ tự thêm rồi ghi vote → báo đã nhận.
-        const saved = await saveInbox(env, teamId, messageId, inboxFields);
+        const saved = await saveInbox(env, teamId, messageId, forSession);
         if (!saved.ok) return saved.response;
         return replyText(env, teamId, chat,
           `📝 Đã nhận vote của ${fromName || 'bạn'}\nTên chưa có trong danh sách, quản lý mở app là em thêm và ghi vote ngay.`, token, quote);
@@ -267,7 +276,7 @@ export default {
       console.log(`vote → ${player.name}: ${r.status}`);
       // Không ghi được ngay (lỗi token/Firestore) → đưa vào hộp thư để app ghi hộ.
       if (r.status !== 'recorded' && r.status !== 'full') {
-        const saved = await saveInbox(env, teamId, messageId, inboxFields);
+        const saved = await saveInbox(env, teamId, messageId, forSession);
         if (!saved.ok) return saved.response;
       }
       return replyText(env, teamId, chat, r.text, token, quote);
@@ -315,6 +324,7 @@ const HELP_TEXT = [
   '',
   '🗳 VOTE · reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không',
   '   "@An 1" vote hộ · "vote" xem buổi đang mở',
+  '   Nhiều buổi cùng mở: "B2 1" = vote buổi B2 · số trống = buổi gần nhất',
   '🥤 NƯỚC · "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ',
   '💰 QUỸ · "quỹ" xem số dư cả nhóm',
   '💬 Hỏi gì cứ @bot, em trả lời',
@@ -433,10 +443,36 @@ function voteNumberErrorText(original) {
  *  - definite: chắc chắn là vote (một con số hợp lệ, hoặc câu ngắn có từ khoá).
  *  - maybe: có từ khoá vote nhưng câu dài → vẫn đưa về app cho quản lý quyết định.
  */
+/**
+ * Mã buổi trong tin nhắn ("B2 1" → 2). Phải khớp ZaloVoteSync.sessionCodeIn
+ * bên app: lệch nhau là webhook ghi vào buổi khác buổi app hiểu.
+ * Chữ "b" phải dính liền số: tên "Tuấn B", "Hùng B" rất hay gặp, nhận cả
+ * "b 1" thì "@Tuấn B 1" bị hiểu thành mã B1 và mất luôn vote hộ.
+ */
+// Dấu cách hai bên chỉ "nhìn" chứ không "ăn" (lookaround), nếu không hai mã
+// đứng liền nhau ("b12 b1") chỉ bỏ được mã đầu.
+const SESSION_CODE_RE = /(?<=^|\s)b(\d{1,2})(?=\s|$)/;
+const SESSION_CODE_RE_ALL = new RegExp(SESSION_CODE_RE.source, 'g');
+
+function sessionCodeIn(text) {
+  const t = normalizeVi(text).replace(/@/g, ' ').replace(/\s+/g, ' ').trim();
+  const m = SESSION_CODE_RE.exec(t);
+  return m ? (parseInt(m[1], 10) || 0) : 0;
+}
+
+/**
+ * Bỏ MỌI mã buổi khỏi câu đã chuẩn hoá để phần còn lại đọc như vote thường.
+ * Phải dùng regex có cờ g: thiếu thì chỉ mã đầu bị bỏ, "b12 0.1 b10" thành
+ * vote "không" thay vì báo gõ sai như bên app.
+ */
+function stripSessionCode(t) {
+  return t.replace(SESSION_CODE_RE_ALL, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function readVoteShape(text, botName) {
   let t = normalizeVi(text);
   if (botName) t = t.split(normalizeVi(botName)).join(' ');
-  t = t.replace(/@/g, ' ').replace(/\s+/g, ' ').trim();
+  t = stripSessionCode(t.replace(/@/g, ' ').replace(/\s+/g, ' ').trim());
   if (!t) return { definite: false, maybe: false, error: null, original: text, botName };
   const shape = readVoteShapeInner(t, text);
   return { ...shape, original: text, botName };
@@ -457,6 +493,8 @@ function readVoteShapeInner(t, text) {
 
   const words = t.replace(/[.,!?()\[\]:;]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (/^\+?\d+\s+(nguoi|ng|suat|slot)$/.test(words)) {
+    // "2 người?" là đang hỏi, không phải vote (giống "1?" và bên app).
+    if (/\?/.test(text)) return { definite: false, maybe: false, error: null };
     const n = parseInt(words, 10);
     return n > MAX_VOTE_SEATS
       ? { definite: false, maybe: true, error: voteNumberErrorText(text) }
@@ -492,6 +530,11 @@ function parseSessionDoc(d) {
     const n = parseInt(v.integerValue || '0', 10) || 0;
     if (n > 0) companions[k] = n;
   }
+  const voteTimes = {};
+  for (const [k, v] of Object.entries(f.voteTimes?.mapValue?.fields || {})) {
+    const t = Date.parse(v.timestampValue || '');
+    if (!Number.isNaN(t)) voteTimes[k] = t;
+  }
   return {
     id: String(d.name || '').split('/').pop(),
     title: f.title?.stringValue || '',
@@ -500,26 +543,48 @@ function parseSessionDoc(d) {
     date, deadline,
     expired: Date.now() > deadline,
     maxPlayers: f.maxPlayers?.integerValue ? parseInt(f.maxPlayers.integerValue, 10) : null,
-    votes, companions,
+    votes, companions, voteTimes,
+    code: f.code?.integerValue ? parseInt(f.code.integerValue, 10) : 0,
     playerIds: (f.playerIds?.arrayValue?.values || []).map((v) => v.stringValue),
   };
 }
 
 /**
- * Số suất đang bị giữ. Đếm cả người quản lý thêm thẳng vào danh sách chơi, vì
- * họ cũng chiếm chỗ; buổi đã chốt thì chỉ đếm danh sách chơi (lúc đó `votes`
- * vẫn giữ cả người bị cắt vì hết chỗ nên đếm theo đó sẽ ra số ảo).
+ * Người này có đang giữ chỗ không - phải khớp Session.holdsSeat bên app.
  *
- * Phải khớp với Session.seatsTaken bên app - lệch nhau là bot báo một đằng,
- * app tính một nẻo.
+ * Đã chốt: chỉ người trong danh sách chơi (lúc đó `votes` vẫn giữ cả người bị
+ * cắt vì hết chỗ). Đang vote: vote MỚI NHẤT quyết định - "0" là nhả chỗ kể cả
+ * khi quản lý đã thêm họ vào danh sách (webhook không sửa được danh sách, chỉ
+ * ghi được vote); chưa trả lời thì theo danh sách quản lý thêm.
+ */
+function holdsSeat(sess, pid) {
+  const players = sess.playerIds || [];
+  if (sess.status === 'closed') return players.includes(pid);
+  const v = sess.votes[pid];
+  return v === undefined ? players.includes(pid) : v === true;
+}
+
+/** Người đang giữ chỗ, cùng thứ tự với Session.seatHolders bên app. */
+function seatHolders(sess) {
+  const players = sess.playerIds || [];
+  if (sess.status === 'closed') return [...players];
+  const out = players.filter((pid) => sess.votes[pid] !== false);
+  const times = sess.voteTimes || {};
+  const yes = Object.entries(sess.votes).filter(([, v]) => v)
+    .map(([pid], i) => ({ pid, t: times[pid] ?? Infinity, i }))
+    .sort((a, b) => (a.t - b.t) || (a.i - b.i))
+    .map((x) => x.pid);
+  for (const pid of yes) if (!out.includes(pid)) out.push(pid);
+  return out;
+}
+
+/**
+ * Số suất đang bị giữ (mỗi người + người đính kèm của họ). Phải khớp với
+ * Session.seatsTaken bên app - lệch nhau là bot báo một đằng, app tính một nẻo.
  */
 function seatsTaken(sess) {
-  const players = sess.playerIds || [];
-  const held = sess.status === 'closed'
-    ? new Set(players)
-    : new Set([...Object.entries(sess.votes).filter(([, v]) => v).map(([pid]) => pid), ...players]);
   let n = 0;
-  for (const pid of held) n += 1 + (sess.companions[pid] || 0);
+  for (const pid of seatHolders(sess)) n += 1 + (sess.companions[pid] || 0);
   return n;
 }
 
@@ -530,10 +595,34 @@ async function votingSessions(env, teamId) {
     .sort((a, b) => (a.expired === b.expired ? a.date - b.date : (a.expired ? 1 : -1)));
 }
 
-/** Buổi đang mở vote gần nhất, hoặc null. Trả cả buổi đã quá hạn để báo cho đúng. */
-async function openVoteSession(env, teamId) {
+/**
+ * Buổi nhận vote của một tin nhắn, hoặc null khi không có buổi nào mở.
+ *
+ * Nhiều buổi cùng mở vote thì người gửi ghi mã buổi trong tin ("B2 1");
+ * không ghi mã thì tính cho buổi gần nhất như trước. `many` để câu xác nhận
+ * nói rõ ghi vào buổi nào.
+ */
+async function openVoteSession(env, teamId, text = '') {
   const list = await votingSessions(env, teamId);
-  return list.length ? list[0] : null;
+  if (!list.length) return null;
+  return pickVoteSession(list, text);
+}
+
+function pickVoteSession(list, text = '') {
+  const code = sessionCodeIn(text);
+  const hit = code > 0 ? list.find((x) => x.code === code) : null;
+  // Ghi mã mà không buổi nào đang mở có mã đó (mã của buổi vừa chốt, gõ nhầm):
+  // KHÔNG tính sang buổi gần nhất - như thế là vote nhầm buổi. Khớp bên app.
+  if (code > 0 && !hit) return { unknownCode: code, open: list };
+  return { ...(hit || list[0]), many: list.length > 1 };
+}
+
+/** Câu báo khi tin vote ghi mã buổi không đang mở (khớp ZaloVoteSync.unknownCodeText). */
+function unknownCodeText(code, list) {
+  const accepting = list.filter((x) => !x.expired);
+  if (!accepting.length) return NO_OPEN_VOTE_TEXT;
+  const names = accepting.map((x) => `${x.code > 0 ? `B${x.code} ` : ''}"${x.title || fmtWeekday(x.date)}"`).join(' · ');
+  return `❓ Dạ không có buổi B${code} đang mở vote ạ.\nĐang mở: ${names}.\nAnh/chị nhắn lại kèm đúng mã giúp em nhé.`;
 }
 
 // ----------------------------------------------------- ghi vote trực tiếp
@@ -623,7 +712,8 @@ function matchPlayerJs(players, fromId, fromName) {
 function readVoteValue(text, botName) {
   let t = normalizeVi(text);
   if (botName) t = t.split(normalizeVi(botName)).join(' ');
-  t = t.replace(/@/g, ' ').replace(/[.,!?()\[\]:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  t = stripSessionCode(
+    t.replace(/@/g, ' ').replace(/[.,!?()\[\]:;]+/g, ' ').replace(/\s+/g, ' ').trim());
   if (t === '-1') return { vote: false, seats: 0 };
   const num = /^\+?(\d+)(\s+(nguoi|ng|suat|slot))?$/.exec(t);
   if (num) {
@@ -637,7 +727,7 @@ function readVoteValue(text, botName) {
 }
 
 function expiredText(open) {
-  return `⏰ Dạ buổi ${open.title || 'chơi'} đã hết hạn vote lúc ${fmtDateTime(open.deadline)} ạ.\nEm xin phép không tính vote này. Anh/chị cần thêm chỗ thì nhắn quản lý giúp em nhé ạ.`;
+  return `⏰ Dạ buổi ${open.many && open.code > 0 ? `B${open.code} ` : ''}${open.title || 'chơi'} đã hết hạn vote lúc ${fmtDateTime(open.deadline)} ạ.\nEm xin phép không tính vote này. Anh/chị cần thêm chỗ thì nhắn quản lý giúp em nhé ạ.`;
 }
 
 function fieldSeg(pid) {
@@ -659,7 +749,9 @@ async function recordVote(env, teamId, sess, player, voteShape, dateMs) {
  * | 'no-auth' | 'error-<mã>'.
  */
 async function recordVotes(env, teamId, sess, entries, dateMs) {
-  const label = sess.title ? `"${sess.title}"` : 'buổi chơi';
+  // Nhiều buổi cùng mở vote thì phải nói rõ buổi nào, nhất là khi chưa đặt tên.
+  const tag = sess.many && sess.code > 0 ? `B${sess.code} ` : '';
+  const label = `${tag}${sess.title ? `"${sess.title}"` : 'buổi chơi'}`;
   const cap = sess.maxPlayers != null ? `/${sess.maxPlayers}` : '';
   const votes = { ...sess.votes };
   const companions = { ...sess.companions };
@@ -668,12 +760,11 @@ async function recordVotes(env, teamId, sess, entries, dateMs) {
   // Bản đếm phải mang theo playerIds/status, nếu không seatsTaken lại quay về
   // chỉ đếm votes và lệch với con số app hiển thị.
   const snapshot = () => ({ votes, companions, playerIds: sess.playerIds, status: sess.status });
-  const players = new Set(sess.playerIds || []);
   for (const e of entries) {
     const pid = e.player.id;
-    // Suất người này ĐANG giữ: đã vote đi, hoặc đã nằm trong danh sách chơi.
-    // Thiếu vế sau thì người được quản lý thêm tay bị đếm hai lần khi họ vote.
-    const mine = (votes[pid] || players.has(pid)) ? 1 + (companions[pid] || 0) : 0;
+    // Suất người này ĐANG giữ (vote "đi", hoặc được quản lý thêm mà chưa báo
+    // không đi). Không trừ phần này thì người được thêm tay bị đếm hai lần.
+    const mine = holdsSeat(snapshot(), pid) ? 1 + (companions[pid] || 0) : 0;
     if (e.vote && sess.maxPlayers != null) {
       const taken = seatsTaken(snapshot());
       if (taken - mine + e.seats > sess.maxPlayers) {
@@ -759,13 +850,16 @@ function parseProxyVotesJs(text, botName, players) {
   let t = normalizeVi(text);
   if (botName) t = t.split(normalizeVi(botName)).join(' ');
   if (t.includes('?')) return null;
-  t = t.replace(/[.!:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  t = stripSessionCode(t.replace(/[.!:;]+/g, ' ').replace(/\s+/g, ' ').trim());
   if (!t.includes('@')) return null;
   const parts = t.split('@');
   const out = [];
   const mk = (player, nameText, rest, rawText) => {
     const shape = readVoteShapeInner(rest, rest);
     if (shape.error) return { player, nameText, isSelf: !nameText, error: shape.error, rawText };
+    // Đuôi chỉ có từ lẻ không phải vote ("@Bình tham", "@An gia"): không tính,
+    // giống bên app. Trước đây readVoteValue mặc định là "đi" nên ghi nhầm.
+    if (!shape.maybe) return { player, nameText, isSelf: !nameText, vote: null, seats: 0, error: null, rawText };
     const v = readVoteValue(rest, '');
     return { player, nameText, isSelf: !nameText, vote: v.vote, seats: v.seats, error: null, rawText };
   };
@@ -830,17 +924,25 @@ async function replyVoteList(env, teamId, chatId, token) {
   const nameOf = (id) => players.find((p) => p.id === id)?.name || 'Ẩn danh';
   const blocks = ['📊 VOTE ĐANG MỞ'];
   for (const x of list.slice(0, 3)) {
-    const yes = Object.entries(x.votes).filter(([, v]) => v).map(([pid]) =>
+    const yes = seatHolders(x).map((pid) =>
       `${nameOf(pid)}${x.companions[pid] ? ` (+${x.companions[pid]})` : ''}`);
     const seats = `${seatsTaken(x)}${x.maxPlayers != null ? '/' + x.maxPlayers : ''} suất`;
     blocks.push([
-      `🏓 ${x.title || 'Buổi chơi'}`,
+      `🏓 ${list.length > 1 && x.code > 0 ? `[B${x.code}] ` : ''}${x.title || 'Buổi chơi'}`,
       `🕕 ${fmtWeekday(x.date)}${x.location ? ` · 📍 ${x.location}` : ''}`,
       x.expired ? `⏰ Đã hết hạn vote · chờ chốt` : `⏰ Hạn vote: ${fmtDateTime(x.deadline)}`,
       `👥 ${seats}${yes.length ? ': ' + yes.join(', ') : ' · chưa ai vote'}`,
     ].join('\n'));
   }
-  if (list.some((x) => !x.expired)) blocks.push('👉 Reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không');
+  if (list.some((x) => !x.expired)) {
+    // Ví dụ lấy đúng mã đang mở: B1 có thể đã chốt, buổi đang mở là B2, B3.
+    const ex = list.find((x) => !x.expired && x.code > 0);
+    const c = ex ? `B${ex.code}` : '';
+    blocks.push(list.length > 1 && c
+      ? `👉 Nhắn mã buổi kèm số: "${c} 1" = đi buổi ${c} · "${c} 0" = không · "${c} 2" = đi 2 người\n`
+        + '↩️ Nhắn số trống thì em tính cho buổi gần nhất ạ.'
+      : '👉 Reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không');
+  }
   return replyText(env, teamId, chatId, blocks.join('\n\n'), token);
 }
 
@@ -992,18 +1094,27 @@ async function announceExpiredVotes(env, teamId, onlySession = '', force = false
       const st = await fsGet(env, statePath);
       if (st?.fields?.announcedAt) continue; // đã báo rồi
     }
-    const yes = Object.entries(x.votes).filter(([, v]) => v).map(([pid]) => pid);
-    const no = Object.entries(x.votes).filter(([, v]) => !v).map(([pid]) => nameOf(pid));
+    // Cùng danh sách người giữ chỗ với app: đã chốt thì là danh sách chơi
+    // (không liệt kê người vote "đi" nhưng bị cắt vì hết chỗ), đang vote thì
+    // gồm cả người quản lý thêm.
+    const yes = seatHolders(x);
+    const no = Object.entries(x.votes).filter(([pid, v]) => !v && !holdsSeat(x, pid)).map(([pid]) => nameOf(pid));
+    // Đã chốt: vote "đi" mà không có tên là bị cắt vì hết chỗ - phải nói ra,
+    // không thì họ tưởng mình có tên (khớp ShareService.voteResultText).
+    const cut = x.status === 'closed'
+      ? Object.entries(x.votes).filter(([pid, v]) => v && !holdsSeat(x, pid)).map(([pid]) => nameOf(pid))
+      : [];
     const seats = seatsTaken(x);
     const cap = x.maxPlayers != null ? `/${x.maxPlayers}` : '';
     const blocks = [
-      `🔒 ${x.expired ? 'HẾT HẠN VOTE' : 'KẾT QUẢ VOTE'} · ${x.title || 'Buổi chơi'}`,
+      `🔒 ${x.expired ? 'HẾT HẠN VOTE' : 'KẾT QUẢ VOTE'} · ${x.code > 0 ? `[B${x.code}] ` : ''}${x.title || 'Buổi chơi'}`,
       `🕕 ${fmtWeekday(x.date)}${x.location ? `\n📍 ${x.location}` : ''}`,
       yes.length
         ? [`✅ ĐI (${seats}${cap} suất)`, ...yes.map((pid) => `• ${nameOf(pid)}${x.companions[pid] ? ` (+${x.companions[pid]} đính kèm)` : ''}`)].join('\n')
         : '😢 Chưa có ai vote đi.',
     ];
     if (no.length) blocks.push(`❌ Không đi: ${no.join(', ')}`);
+    if (cut.length) blocks.push(`⏳ Hết chỗ: ${cut.join(', ')}. Còn muốn đi thì nhắn quản lý ạ.`);
     if (x.maxPlayers != null && seats > x.maxPlayers) blocks.push(`⚠️ Vượt ${seats - x.maxPlayers} suất so với giới hạn, quản lý chốt danh sách trong app.`);
     blocks.push('📌 Quản lý bỏ ghim tin vote giúp em nhé. Danh sách chính thức xem trong app.');
     const sent = await fetch(`${ZALO_API}/bot${token}/sendMessage`, {
@@ -1037,30 +1148,29 @@ async function buildContext(env, teamId, teamName) {
   try {
     const sess = (await fsGet(env, `teams/${encodeURIComponent(teamId)}/sessions?pageSize=50&orderBy=date%20desc`))?.documents || [];
     const now = Date.now();
+    // Đếm SUẤT bằng đúng seatsTaken như câu xác nhận của bot (gồm người đính
+    // kèm và người quản lý thêm). Đếm số vote "1" thì AI trả lời "còn mấy chỗ"
+    // lệch với chính con số bot vừa báo.
     const parsed = sess.map((d) => {
       const f = d.fields || {};
-      const date = Date.parse(f.date?.timestampValue || 0);
-      const votes = f.votes?.mapValue?.fields || {};
-      const yes = Object.values(votes).filter((v) => v.booleanValue === true).length;
-      const deadline = f.voteDeadline?.timestampValue ? Date.parse(f.voteDeadline.timestampValue) : date;
+      const x = parseSessionDoc(d);
       return {
-        title: f.title?.stringValue || '', date, location: f.location?.stringValue || '',
-        status: f.status?.stringValue || '', yes, deadline,
-        max: f.maxPlayers?.integerValue ? parseInt(f.maxPlayers.integerValue, 10) : null,
-        players: (f.playerIds?.arrayValue?.values || []).length,
+        ...x, seats: seatsTaken(x),
         fee: parseInt(f.courtFee?.integerValue || '0', 10) || 0,
         creator: f.createdByName?.stringValue || '',
       };
     }).sort((a, b) => a.date - b.date);
+    const manyOpen = parsed.filter((x) => x.status === 'voting').length > 1;
     const upcoming = parsed.filter((x) => x.date >= now - 3 * 3600 * 1000).slice(0, 2);
     const last = parsed.filter((x) => x.date < now - 3 * 3600 * 1000).slice(-1);
     for (const x of upcoming) {
-      lines.push(`Buổi sắp tới: ${x.title || 'buổi chơi'} lúc ${fmtDateTime(x.date)}` +
-        `${x.location ? ' tại ' + x.location : ''}; ${x.status === 'voting' ? `đang vote, ${x.yes}${x.max ? '/' + x.max : ''} người đi, hạn vote ${fmtDateTime(x.deadline)}` : `đã chốt ${x.players} người`}` +
+      const tag = manyOpen && x.status === 'voting' && x.code > 0 ? ` (mã B${x.code}, nhắn "B${x.code} 1" để vote buổi này)` : '';
+      lines.push(`Buổi sắp tới: ${x.title || 'buổi chơi'}${tag} lúc ${fmtDateTime(x.date)}` +
+        `${x.location ? ' tại ' + x.location : ''}; ${x.status === 'voting' ? `đang vote, ${x.seats}${x.maxPlayers ? '/' + x.maxPlayers : ''} suất đã giữ, hạn vote ${fmtDateTime(x.deadline)}` : `đã chốt ${x.seats} suất`}` +
         `${x.fee ? `; tiền sân ${fmtVnd(x.fee)}` : ''}${x.creator ? `; người tạo ${x.creator}` : ''}.`);
     }
     for (const x of last) {
-      lines.push(`Buổi gần nhất đã chơi: ${x.title || 'buổi chơi'} ${fmtDateTime(x.date)}, ${x.players} người.`);
+      lines.push(`Buổi gần nhất đã chơi: ${x.title || 'buổi chơi'} ${fmtDateTime(x.date)}, ${x.seats} suất.`);
     }
     if (!upcoming.length) lines.push('Chưa có buổi chơi nào sắp tới.');
   } catch { /* bỏ qua */ }

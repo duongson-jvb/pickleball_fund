@@ -55,11 +55,34 @@ class ZaloVoteSync {
   /// tránh câu nói thường như "mai mình đi đá bóng nhé" bị tính là đi.
   static const _maxWordsForKeywordVote = 5;
 
+  /// Mã buổi trong tin nhắn: "B2 1" → 2, không có → 0. Dùng để nhắn đúng
+  /// buổi khi nhiều buổi cùng mở vote.
+  ///
+  /// Chữ "b" phải dính liền số: tên kiểu "Tuấn B", "Hùng B" rất hay gặp, nếu
+  /// nhận cả "b 1" thì "@Tuấn B 1" bị hiểu thành mã B1 và mất luôn vote hộ.
+  /// Dấu cách hai bên chỉ "nhìn" chứ không "ăn" (lookaround), nếu không hai mã
+  /// đứng liền nhau ("b12 b1") chỉ bỏ được mã đầu. Giống hệt SESSION_CODE_RE
+  /// bên webhook: lệch nhau là một tin bên tính vote, bên không.
+  static final _codePattern = RegExp(r'(?<=^|\s)b(\d{1,2})(?=\s|$)');
+
+  /// Đọc mã buổi người gửi ghi trong tin ("B2 1" → 2). 0 = không ghi mã.
+  static int sessionCodeIn(String text) {
+    var t = normalizeVi(text).replaceAll('@', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    final m = _codePattern.firstMatch(t);
+    return m == null ? 0 : (int.tryParse(m.group(1)!) ?? 0);
+  }
+
+  /// Bỏ mã buổi khỏi câu đã chuẩn hoá để phần còn lại đọc như vote thường.
+  /// Không bỏ thì "B10 1" bị đọc thành số suất 10 và báo nhập sai.
+  static String _stripCode(String t) =>
+      t.replaceAll(_codePattern, ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+
   /// Kết quả đọc một tin vote.
   static VoteReading readVote(String text, {String botName = ''}) {
     var t = normalizeVi(text);
     if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
-    t = t.replaceAll('@', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    t = _stripCode(
+        t.replaceAll('@', ' ').replaceAll(RegExp(r'\s+'), ' ').trim());
     if (t.isEmpty) return const VoteReading(null);
 
     // Tin chỉ gồm chữ số và dấu phân cách (không có chữ cái): bắt buộc phải là
@@ -73,14 +96,18 @@ class ZaloVoteSync {
       return _fromNumber(m.group(1)!, text);
     }
 
-    // "2 người", "3 suất".
-    final withUnit =
-        RegExp(r'^\+?(\d+)\s+(nguoi|ng|suat|slot)$').firstMatch(t);
-    if (withUnit != null) return _fromNumber(withUnit.group(1)!, text);
-
     final words = t.replaceAll(RegExp(r'[.,!?()\[\]:;]+'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+
+    // "2 người", "3 suất", "2 người nhé!" (bỏ dấu câu như webhook). Có dấu "?"
+    // là đang hỏi ("2 người?"), không phải vote - giống "1?".
+    final withUnit =
+        RegExp(r'^\+?(\d+)\s+(nguoi|ng|suat|slot)$').firstMatch(words);
+    if (withUnit != null) {
+      if (text.contains('?')) return const VoteReading(null);
+      return _fromNumber(withUnit.group(1)!, text);
+    }
     if (_noPattern.hasMatch(words) || _yesPattern.hasMatch(words)) {
       // Câu hỏi ("sân mấy người chơi em?", "có đi không?") không phải vote.
       if (text.contains('?') || _questionPattern.hasMatch(words)) {
@@ -192,7 +219,8 @@ class ZaloVoteSync {
     var t = normalizeVi(text);
     if (botName.isNotEmpty) t = t.replaceAll(normalizeVi(botName), ' ');
     if (t.contains('?')) return null;
-    t = t.replaceAll(RegExp(r'[.!:;]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    t = _stripCode(
+        t.replaceAll(RegExp(r'[.!:;]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim());
     if (!t.contains('@')) return null;
     final parts = t.split('@');
     final out = <ProxyVote>[];
@@ -273,14 +301,177 @@ class ZaloVoteSync {
     return voting.first;
   }
 
+  /// Các buổi đang mở vote, buổi gần nhất trước.
+  static List<Session> votingSessions(List<Session> sessions) {
+    final out = [
+      for (final s in sessions)
+        if (s.status == SessionStatus.voting) s,
+    ]..sort((a, b) => a.date.compareTo(b.date));
+    return out;
+  }
+
+  /// Buổi ứng với một tin nhắn khi nhiều buổi cùng mở vote: theo mã buổi
+  /// người gửi ghi ("B2 1"), không ghi mã thì áp cho buổi gần nhất. Ghi mã mà
+  /// không buổi nào đang mở có mã đó → null: KHÔNG được tính sang buổi khác
+  /// (mã của buổi vừa chốt, gõ nhầm mã).
+  static Session? sessionFor(ZaloUpdate u, List<Session> open, Session? fallback) {
+    final code = sessionCodeIn(u.text);
+    if (code <= 0) return fallback;
+    for (final s in open) {
+      if (s.code == code) return s;
+    }
+    return null;
+  }
+
+  /// Câu báo khi tin vote ghi mã buổi không đang mở.
+  static String unknownCodeText(int code, List<Session> open) {
+    final accepting = [
+      for (final s in open)
+        if (!s.voteExpired) s,
+    ];
+    if (accepting.isEmpty) return noOpenVoteText;
+    final list = accepting
+        .map((s) => '${s.codeLabel.isEmpty ? '' : '${s.codeLabel} '}'
+            '"${s.title.isEmpty ? fmtWeekday(s.date) : s.title}"')
+        .join(' · ');
+    return '❓ Dạ không có buổi B$code đang mở vote ạ.\nĐang mở: $list.\n'
+        'Anh/chị nhắn lại kèm đúng mã giúp em nhé.';
+  }
+
   /// Áp dụng danh sách tin nhắn mới vào buổi [target] (hoặc tự chọn).
+  ///
+  /// Nhiều buổi cùng mở vote thì tin được chia theo mã buổi ghi trong tin
+  /// ("B2 1"); tin không ghi mã áp cho [target], hoặc buổi gần nhất khi
+  /// người gọi không chỉ định buổi nào.
   static Future<ZaloSyncResult> apply(
     TeamStore store,
     List<ZaloUpdate> updates, {
     Session? target,
   }) async {
     await rememberChats(store, updates);
-    final session = target ?? pickTarget(store.sessions);
+
+    // Tin trong hộp thư mà webhook đã gắn buổi (vote không ghi thẳng được):
+    // áp đúng buổi đó. Buổi đó đã chốt thì báo lại cho người gửi, KHÔNG chuyển
+    // sang buổi đang mở khác - như thế là vote nhầm buổi.
+    if (updates.any((u) => u.sessionId.isNotEmpty)) {
+      final pinned = <String, List<ZaloUpdate>>{};
+      final rest = <ZaloUpdate>[];
+      for (final u in updates) {
+        if (u.sessionId.isEmpty) {
+          rest.add(u);
+        } else {
+          pinned.putIfAbsent(u.sessionId, () => []).add(u);
+        }
+      }
+      final results = <ZaloSyncResult>[];
+      for (final e in pinned.entries) {
+        Session? s;
+        for (final x in store.sessions) {
+          if (x.id == e.key) s = x;
+        }
+        if (s != null && s.status == SessionStatus.voting) {
+          results.add(await _applyTo(store, e.value, s));
+          continue;
+        }
+        for (final u in e.value) {
+          await _send(store, u.chatId, closedBeforeRecordText(s));
+        }
+        results.add(ZaloSyncResult(target: s, ignoredCount: e.value.length));
+      }
+      if (rest.isNotEmpty) results.add(await apply(store, rest, target: target));
+      return _combine(results);
+    }
+
+    // Buổi đã chốt không nhận vote nữa (bấm "Đồng bộ ngay" ở màn buổi đã
+    // chốt): ghi vote vào đó thì bot vẫn xác nhận "ĐI" mà không ai được tính.
+    final fallback = target != null && target.status == SessionStatus.voting
+        ? target
+        : pickTarget(store.sessions);
+    final open = votingSessions(store.sessions);
+
+    // Tin vote ghi mã buổi không đang mở ("B9 1", mã của buổi vừa chốt): báo
+    // lại các mã đang mở, KHÔNG tính sang buổi gần nhất - như thế là vote nhầm buổi.
+    final bot = store.settings.zaloBotName;
+    var unknownCount = 0;
+    final kept = <ZaloUpdate>[];
+    for (final u in updates) {
+      final code = sessionCodeIn(u.text);
+      final isVote = code > 0 &&
+          !open.any((s) => s.code == code) &&
+          !ZaloDrinks.looksLikeDrink(u.text, store.drinkTypes, botName: bot) &&
+          // Gõ sai cú pháp thì báo gõ sai trước (như webhook), không báo mã.
+          (readVote(u.text, botName: bot).vote != null ||
+              parseProxyVotes(u.text, store.activePlayers, botName: bot) != null);
+      if (!isVote) {
+        kept.add(u);
+        continue;
+      }
+      unknownCount++;
+      await _reply(store, u.chatId, unknownCodeText(code, open));
+    }
+    if (unknownCount > 0) {
+      final r = await apply(store, kept, target: target);
+      return ZaloSyncResult(
+        target: r.target,
+        appliedNames: r.appliedNames,
+        createdNames: r.createdNames,
+        fullNames: r.fullNames,
+        drinkNotes: r.drinkNotes,
+        lateCount: r.lateCount,
+        pendingCount: r.pendingCount,
+        ignoredCount: r.ignoredCount + unknownCount,
+      );
+    }
+    if (open.length < 2) return _applyTo(store, updates, fallback);
+
+    final groups = <String, List<ZaloUpdate>>{};
+    final sessionOf = <String, Session?>{};
+    for (final u in updates) {
+      final s = sessionFor(u, open, fallback);
+      final key = s?.id ?? '';
+      sessionOf[key] = s;
+      groups.putIfAbsent(key, () => []).add(u);
+    }
+    final results = <ZaloSyncResult>[];
+    for (final e in groups.entries) {
+      // Lấy bản mới nhất ngay trước khi áp: nhóm trước có thể mất vài giây
+      // (gửi tin, tạo người chơi), trong lúc đó webhook vẫn ghi vote vào buổi.
+      var s = sessionOf[e.key];
+      for (final x in store.sessions) {
+        if (x.id == e.key) s = x;
+      }
+      results.add(await _applyTo(store, e.value, s));
+    }
+    if (results.length == 1) return results.first;
+    // Nhiều buổi cùng nhận vote: báo cáo chung lấy buổi gần nhất làm mốc.
+    return _combine(results, target: fallback);
+  }
+
+  /// Gộp kết quả xử lý của nhiều nhóm tin (mỗi nhóm một buổi).
+  static ZaloSyncResult _combine(List<ZaloSyncResult> results, {Session? target}) =>
+      ZaloSyncResult(
+        target: target ?? results.map((r) => r.target).whereType<Session>().firstOrNull,
+        appliedNames: {for (final r in results) ...r.appliedNames}.toList(),
+        createdNames: [for (final r in results) ...r.createdNames],
+        fullNames: [for (final r in results) ...r.fullNames],
+        drinkNotes: [for (final r in results) ...r.drinkNotes],
+        lateCount: results.fold(0, (a, r) => a + r.lateCount),
+        pendingCount: results.fold(0, (a, r) => a + r.pendingCount),
+        ignoredCount: results.fold(0, (a, r) => a + r.ignoredCount),
+      );
+
+  /// Câu báo khi buổi đã chốt trước khi kịp ghi vote (tin xử lý muộn).
+  static String closedBeforeRecordText(Session? s) {
+    final label = s == null || s.title.isEmpty ? 'buổi chơi' : '"${s.title}"';
+    return '⏰ Dạ $label đã chốt danh sách trước khi em kịp ghi vote ạ.\n'
+        'Anh/chị cần đổi thì nhắn quản lý giúp em nhé.';
+  }
+
+  static Future<ZaloSyncResult> _applyTo(
+    TeamStore store,
+    List<ZaloUpdate> updates,
+    Session? session,
+  ) async {
     // Không có buổi nào đang mở vote thì VẪN xử lý lệnh (ghi nước, quỹ, help) -
     // ghi nước là việc làm sau buổi chơi, lúc đó buổi đã chốt từ lâu. Chỉ riêng
     // tin vote là không ghi được, và được báo lại cho người gửi.
@@ -289,6 +480,7 @@ class ZaloVoteSync {
         session?.createdAt.subtract(const Duration(minutes: 1)) ?? DateTime(2100);
     final settings = store.settings;
     final groupId = settings.zaloGroupId;
+    final manyOpen = votingSessions(store.sessions).length > 1;
 
     final votes = {...?session?.votes};
     final voteTimes = {...?session?.voteTimes};
@@ -297,6 +489,8 @@ class ZaloVoteSync {
       for (final p in session?.zaloPending ?? const <ZaloPendingVote>[]) p.zaloId: p
     };
     final applied = <String>[];
+    final changedIds = <String>{}; // người có vote đổi trong đợt này
+    var pendingChanged = false;
     final created = <String, Player>{}; // zaloId -> người chơi vừa tự tạo
     final createdNames = <String>[];
     final fullNames = <String>[]; // vote "đi" bị từ chối vì đã đủ người
@@ -402,6 +596,16 @@ class ZaloVoteSync {
       if (sender == null && u.fromId.isNotEmpty && created.containsKey(u.fromId)) {
         sender = created[u.fromId];
       }
+      // Người đã bị tạm ngưng nhắn tin: dùng đúng hồ sơ cũ (khớp Zalo id), không
+      // tự tạo thêm một người trùng - hai hồ sơ thì tiền của họ bị tách làm hai.
+      if (sender == null && u.fromId.isNotEmpty) {
+        for (final p in store.players) {
+          if (p.zaloId == u.fromId) {
+            sender = p;
+            break;
+          }
+        }
+      }
       // Vote hộ: "@An 1 @Bình 0" (phần trước @ đầu tiên là của chính người gửi).
       // Không phải vote hộ → một phần duy nhất: vote của người gửi.
       final proxy =
@@ -415,16 +619,25 @@ class ZaloVoteSync {
       final parts = proxy ??
           [ProxyVote(null, '', readVote(u.text, botName: settings.zaloBotName))];
       final lines = <String>[]; // trả lời cho tin này
-      final label = session.title.isEmpty ? 'buổi chơi' : '"${session.title}"';
+      // Nhiều buổi cùng mở vote thì câu xác nhận phải nói rõ ghi vào buổi nào,
+      // nhất là khi các buổi chưa đặt tên.
+      final label = [
+        if (manyOpen && session.codeLabel.isNotEmpty) session.codeLabel,
+        session.title.isEmpty ? 'buổi chơi' : '"${session.title}"',
+      ].join(' ');
       final cap = session.maxPlayers != null ? '/${session.maxPlayers}' : '';
       // Đếm cả người quản lý đã thêm thẳng vào danh sách chơi: họ cũng chiếm
       // chỗ. Chỉ đếm theo `votes` thì app tưởng còn chỗ, nhận thừa vote rồi
       // lúc chốt lại cắt mất người đã được bot xác nhận.
+      // Cùng quy tắc với Session.holdsSeat: vote mới nhất quyết định, chưa
+      // trả lời thì theo danh sách quản lý thêm.
+      bool holds(String pid) => votes[pid] ?? session.playerIds.contains(pid);
       int seatsNow() {
         final held = <String>{
           for (final e in votes.entries)
             if (e.value) e.key,
-          ...session.playerIds,
+          for (final pid in session.playerIds)
+            if (holds(pid)) pid,
         };
         return held.fold(0, (n, pid) => n + 1 + (companions[pid] ?? 0));
       }
@@ -460,12 +673,10 @@ class ZaloVoteSync {
         final count = vote ? reading.seats : 0;
         if (vote && session.maxPlayers != null) {
           final seats = seatsNow();
-          // Suất người này ĐANG giữ: đã vote đi, hoặc đã nằm trong danh sách
-          // chơi. Thiếu vế sau thì người được quản lý thêm tay bị đếm hai lần
-          // khi chính họ vote, và bị báo hết chỗ oan.
-          final mine = (player != null &&
-                  (votes[player.id] == true ||
-                      session.playerIds.contains(player.id)))
+          // Suất người này ĐANG giữ (vote "đi", hoặc được quản lý thêm mà chưa
+          // báo không đi). Không trừ phần này thì người được thêm tay bị đếm
+          // hai lần khi chính họ vote, và bị báo hết chỗ oan.
+          final mine = (player != null && holds(player.id))
               ? 1 + (companions[player.id] ?? 0)
               : 0;
           if (seats - mine + count > session.maxPlayers!) {
@@ -494,6 +705,7 @@ class ZaloVoteSync {
         }
         if (player == null) {
           // Chỉ xếp vào "chờ gán" khi tin thật sự là vote mà chưa khớp được người.
+          pendingChanged = true;
           pending[u.fromId.isEmpty ? u.messageId : u.fromId] = ZaloPendingVote(
             zaloId: u.fromId,
             name: u.fromName,
@@ -505,6 +717,7 @@ class ZaloVoteSync {
         }
 
         votes[player.id] = vote;
+        changedIds.add(player.id);
         voteTimes[player.id] = u.date;
         // Người đính kèm: "2" → 1 đính kèm; vote không đi hoặc "1" → bỏ đính kèm.
         if (vote && count > 1) {
@@ -512,7 +725,7 @@ class ZaloVoteSync {
         } else {
           companions.remove(player.id);
         }
-        if (a.isSelf) pending.remove(u.fromId);
+        if (a.isSelf && pending.remove(u.fromId) != null) pendingChanged = true;
         if (!applied.contains(player.name)) applied.add(player.name);
         // Xác nhận cho người vote (ở chế độ webhook, chỉ người mới được tự thêm
         // hoặc tin webhook ghi lỗi mới tới đây; còn lại webhook đã xác nhận ngay).
@@ -539,19 +752,36 @@ class ZaloVoteSync {
       }
     }
 
-    if (session != null &&
-        (applied.isNotEmpty || pending.length != session.zaloPending.length)) {
-      // companions ghi theo từng khoá (xoá khoá đã bỏ) để chắc chắn khoá cũ biến mất.
-      final companionUpdates = <String, dynamic>{
-        for (final k in {...session.companions.keys, ...companions.keys})
-          'companions.$k': companions.containsKey(k) ? companions[k] : FieldValue.delete(),
-      };
-      await store.repo.updateSessionFields(session.id, {
-        'votes': votes,
-        'voteTimes': voteTimes.map((k, v) => MapEntry(k, Timestamp.fromDate(v))),
-        ...companionUpdates,
-        'zaloPending': pending.values.map((e) => e.toMap()).toList(),
+    var written = true;
+    if (session != null && (changedIds.isNotEmpty || pendingChanged)) {
+      // Chỉ ghi đúng những người có vote đổi trong đợt này, theo từng khoá.
+      // Ghi cả bảng `votes` từ bản chụp lúc bắt đầu thì vote webhook vừa ghi
+      // cho người khác (đã được bot xác nhận) bị xoá mất. Chỉ ghi khi buổi
+      // còn đang vote (kiểm trong cùng giao dịch).
+      written = await store.repo.updateVotingSessionFields(session.id, {
+        for (final pid in changedIds) ...{
+          'votes.$pid': votes[pid],
+          'voteTimes.$pid': Timestamp.fromDate(voteTimes[pid]!),
+          'companions.$pid':
+              companions.containsKey(pid) ? companions[pid] : FieldValue.delete(),
+        },
+        if (pendingChanged) 'zaloPending': pending.values.map((e) => e.toMap()).toList(),
       });
+    }
+    if (!written) {
+      // Buổi vừa chốt (ở máy này hoặc máy khác) trước khi kịp ghi: không được
+      // báo "ĐI", vì người đó không có tên trong danh sách chốt.
+      for (final chat in confirmations.keys) {
+        await _send(store, chat, closedBeforeRecordText(session));
+      }
+      return ZaloSyncResult(
+        target: session,
+        createdNames: createdNames,
+        drinkNotes: drinkNotes,
+        lateCount: lateCount + changedIds.length,
+        pendingCount: session?.zaloPending.length ?? 0,
+        ignoredCount: ignored + changedIds.length,
+      );
     }
     // Báo lại cho người vote: điểm danh thành công thì không được im lặng.
     // Gửi cả ở chế độ webhook, vì webhook mới chỉ báo "đã nhận" (người chưa có
@@ -592,8 +822,9 @@ class ZaloVoteSync {
 
     final lines = <String>[];
     final notes = <String>[];
-    // Gom thay đổi theo buổi để mỗi buổi chỉ lưu + tính tiền một lần.
-    final touched = <String, Session>{};
+    // Gom thay đổi theo buổi để mỗi buổi chỉ lưu + tính tiền một lần. Mỗi
+    // phần việc giữ chỗ dòng trả lời của nó (điền sau khi lưu xong).
+    final bySession = <String, List<(Player, List<DrinkChange>, int)>>{};
 
     for (final a in assignments) {
       final target = a.isSelf ? sender : a.player;
@@ -618,40 +849,64 @@ class ZaloVoteSync {
         notes.add('$who: không có buổi');
         continue;
       }
-      var s = touched[session.id] ?? session;
-      // KHÔNG tự thêm người vào danh sách chơi (sẽ làm tiền sân của người khác
-      // đổi). Chỉ ghi nước; quản lý thêm họ vào buổi nếu họ có chơi.
-      final notInSession = Session.isCompanionId(target.id)
-          ? !(s.playerIds.contains(Session.hostOf(target.id)) &&
-              Session.companionIndex(target.id) <= s.companionsOf(Session.hostOf(target.id)))
-          : !s.playerIds.contains(target.id);
-      // Đóng băng giá nước cho các loại chưa có giá trong buổi.
-      final prices = {...s.drinkPrices};
-      for (final c in a.command.changes) {
-        prices.putIfAbsent(
-            c.drinkTypeId, () => store.drinkTypeById(c.drinkTypeId)?.priceOn(s.date) ?? 0);
-      }
-      final drinks = ZaloDrinks.applyChanges(s.drinks, target.id, a.command.changes);
-      s = s.copyWith(drinks: drinks, drinkPrices: prices);
-      touched[s.id] = s;
-
-      final mine = drinks[target.id] ?? {};
-      var total = 0;
-      final parts = <String>[];
-      mine.forEach((id, q) {
-        total += q * (prices[id] ?? 0);
-        parts.add('$q ${store.drinkTypeById(id)?.name ?? 'nước'}');
-      });
-      final label = s.title.isEmpty ? fmtDate(s.date) : s.title;
-      lines.add(parts.isEmpty
-          ? '✅ ${target.name}: đã xoá nước ở "$label".'
-          : '✅ ${target.name} ($label): ${parts.join(', ')} = ${vnd(total)}'
-              '${notInSession ? ' · chưa có trong danh sách chơi buổi này, quản lý thêm nếu có chơi' : ''}.');
-      notes.add('${target.name}: ${parts.isEmpty ? 'xoá nước' : parts.join(', ')}');
+      bySession.putIfAbsent(session.id, () => []).add((target, a.command.changes, lines.length));
+      lines.add(''); // điền sau khi lưu
     }
 
-    for (final s in touched.values) {
-      await store.repo.saveAndSettleSession(s);
+    for (final e in bySession.entries) {
+      // Ghi trên bản MỚI NHẤT ở máy chủ, không trên bản chụp: hai tin ghi nước
+      // liền nhau thì tin sau lưu đè làm mất nước của tin trước, còn ghi nước
+      // đúng lúc buổi đang được chốt thì bản chụp "đang vote" mở lại buổi.
+      Session? saved;
+      try {
+        saved = await store.repo.editSessionFresh(e.key, (fresh) {
+          var s = fresh;
+          for (final (target, changes, _) in e.value) {
+            // Đóng băng giá nước cho các loại chưa có giá trong buổi.
+            final prices = {...s.drinkPrices};
+            for (final c in changes) {
+              prices.putIfAbsent(
+                  c.drinkTypeId, () => store.drinkTypeById(c.drinkTypeId)?.priceOn(s.date) ?? 0);
+            }
+            s = s.copyWith(
+              drinks: ZaloDrinks.applyChanges(s.drinks, target.id, changes),
+              drinkPrices: prices,
+            );
+          }
+          return s;
+        });
+      } catch (_) {
+        saved = null;
+      }
+      for (final (target, _, slot) in e.value) {
+        if (saved == null) {
+          lines[slot] = '⏳ ${target.name}: em chưa ghi kịp nước, anh/chị nhắn lại giúp em nhé.';
+          notes.add('${target.name}: chưa ghi được');
+          continue;
+        }
+        final s = saved;
+        // KHÔNG tự thêm người vào danh sách chơi (sẽ làm tiền sân của người
+        // khác đổi). Chỉ ghi nước; quản lý thêm họ vào buổi nếu họ có chơi.
+        // Cùng quy tắc giữ chỗ với tab Người đi: người đã vote "đi" mà buổi
+        // chưa chốt cũng là có trong danh sách, không được báo "chưa có tên".
+        final notInSession = Session.isCompanionId(target.id)
+            ? !(s.holdsSeat(Session.hostOf(target.id)) &&
+                Session.companionIndex(target.id) <= s.companionsOf(Session.hostOf(target.id)))
+            : !s.holdsSeat(target.id);
+        final mine = s.drinks[target.id] ?? {};
+        var total = 0;
+        final parts = <String>[];
+        mine.forEach((id, q) {
+          total += q * (s.drinkPrices[id] ?? 0);
+          parts.add('$q ${store.drinkTypeById(id)?.name ?? 'nước'}');
+        });
+        final label = s.title.isEmpty ? fmtDate(s.date) : s.title;
+        lines[slot] = parts.isEmpty
+            ? '✅ ${target.name}: đã xoá nước ở "$label".'
+            : '✅ ${target.name} ($label): ${parts.join(', ')} = ${vnd(total)}'
+                '${notInSession ? ' · chưa có trong danh sách chơi buổi này, quản lý thêm nếu có chơi' : ''}.';
+        notes.add('${target.name}: ${parts.isEmpty ? 'xoá nước' : parts.join(', ')}');
+      }
     }
 
     if (lines.isEmpty) return null;
@@ -719,17 +974,32 @@ class ZaloVoteSync {
     bool? voteOverride,
   }) async {
     final vote = voteOverride ?? p.vote ?? true;
-    final votes = {...session.votes, player.id: vote};
-    final remaining = session.zaloPending
-        .where((e) => !(e.zaloId == p.zaloId && e.name == p.name))
-        .map((e) => e.toMap())
-        .toList();
     if (p.zaloId.isNotEmpty) {
       await store.repo.updatePlayer(player.id, {'zaloId': p.zaloId, 'zaloName': p.name});
     }
-    await store.repo.updateSessionFields(session.id, {
-      'votes': votes,
-      'zaloPending': remaining,
+    // Áp lên bản MỚI NHẤT ở máy chủ, theo trạng thái của buổi lúc đó (có thể
+    // vừa chốt / mở lại trong lúc quản lý đang chọn người): sửa bản đang cầm
+    // thì ghi đè vote webhook vừa ghi, hoặc mở lại buổi vừa chốt.
+    await store.repo.editSessionFresh(session.id, (fresh) {
+      final left = fresh.zaloPending
+          .where((e) => !(e.zaloId == p.zaloId && e.name == p.name))
+          .toList();
+      if (fresh.status == SessionStatus.voting) {
+        // Người đó đã vote lại sau tin này thì giữ vote mới, chỉ bỏ tin chờ.
+        if (fresh.voteTimes[player.id]?.isAfter(p.date) ?? false) {
+          return fresh.copyWith(zaloPending: left);
+        }
+        // Mốc giờ = lúc người đó nhắn, để thứ tự ưu tiên khi hết chỗ đúng.
+        return fresh.copyWith(
+          votes: {...fresh.votes, player.id: vote},
+          voteTimes: {...fresh.voteTimes, player.id: p.date},
+          companions: vote ? null : ({...fresh.companions}..remove(player.id)),
+          zaloPending: left,
+        );
+      }
+      // Đã chốt: danh sách người đi là danh sách chơi, phải sửa nó (và tính lại
+      // tiền), chỉ đổi vote thì gán xong như không có gì xảy ra.
+      return fresh.withAdminAnswer(player.id, vote, p.date).copyWith(zaloPending: left);
     });
   }
 

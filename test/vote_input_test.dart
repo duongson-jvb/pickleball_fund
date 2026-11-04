@@ -26,6 +26,14 @@ void main() {
       expect(ZaloVoteSync.readVote('1.').vote, isTrue);
     });
 
+    test('"2 người!" / "3 suất." là vote; "2 người?" là câu hỏi', () {
+      // Webhook bỏ dấu câu trước khi đọc, app phải đọc giống vậy.
+      expect(ZaloVoteSync.readVote('2 người!').seats, 2);
+      expect(ZaloVoteSync.readVote('3 suất.').seats, 3);
+      expect(ZaloVoteSync.readVote('2 người ?').vote, isNull);
+      expect(ZaloVoteSync.readVote('3 suất?').vote, isNull);
+    });
+
     test('bỏ @mention bot trước khi đọc', () {
       final r = ZaloVoteSync.readVote('@Bot PickleBall JVB 2', botName: 'Bot PickleBall JVB');
       expect(r.vote, isTrue);

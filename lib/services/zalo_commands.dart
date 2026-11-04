@@ -12,6 +12,7 @@ class ZaloCommands {
       '\n'
       '🗳 VOTE · reply tin vote: 1 = đi · 2 = đi 2 người · 0 = không\n'
       '   "@An 1" vote hộ · "vote" xem buổi đang mở\n'
+      '   Nhiều buổi cùng mở: "B2 1" = vote buổi B2 · số trống = buổi gần nhất\n'
       '🥤 NƯỚC · "nước" xem mã & giá · "N1 2" ghi · "+1 N1" cộng · "@An N1 2" nhập hộ\n'
       '💰 QUỸ · "quỹ" xem số dư cả nhóm\n'
       '💬 Hỏi gì cứ @bot, em trả lời\n'

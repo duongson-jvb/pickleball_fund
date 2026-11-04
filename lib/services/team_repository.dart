@@ -5,6 +5,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/models.dart';
 import 'settlement.dart';
 
+/// Buổi chơi vừa được chốt / mở lại ở máy khác trong lúc màn hình này còn cầm
+/// bản cũ. Lưu đè lúc đó sẽ mở lại (hoặc chốt) buổi ngoài ý muốn và làm sai sổ
+/// quỹ, nên dừng lại để người dùng xem lại.
+class SessionChangedElsewhere implements Exception {
+  const SessionChangedElsewhere();
+
+  @override
+  String toString() =>
+      'Buổi vừa được chốt hoặc mở lại ở máy khác. Màn hình đã cập nhật, kiểm tra rồi làm lại nếu cần.';
+}
+
 /// Truy cập Firestore cho một nhóm: teams/{teamId}/...
 class TeamRepository {
   TeamRepository(this.teamId, {FirebaseFirestore? firestore})
@@ -218,10 +229,10 @@ class TeamRepository {
     // 2. Gỡ khỏi các buổi chơi (danh sách chơi, vote, nước) rồi tính lại.
     final sessionDocs = await sessions.get();
     for (final d in sessionDocs.docs) {
-      final s = Session.fromDoc(d);
-      if (!s.mentions(id)) continue;
+      if (!Session.fromDoc(d).mentions(id)) continue;
       // Xoá người chơi là cố ý bỏ vote của họ → không gộp lại từ máy chủ.
-      await saveAndSettleSession(s.withoutPlayer(id), keepRemoteVotes: false);
+      await editSessionFresh(d.id, (fresh) => fresh.mentions(id) ? fresh.withoutPlayer(id) : null,
+          keepRemoteVotes: false);
     }
 
     // 3. Gỡ khỏi các chi phí có chọn người rồi tính lại.
@@ -364,6 +375,49 @@ class TeamRepository {
   Future<void> updateSessionFields(String id, Map<String, dynamic> data) =>
       sessions.doc(id).update(data);
 
+  /// Ghi vote vào buổi CHỈ KHI buổi còn đang vote (đọc và ghi trong cùng một
+  /// giao dịch). Trả false nếu buổi đã chốt. Máy quản trị không bị rules chặn
+  /// như webhook, nên không kiểm thì vote xử lý muộn (tin trong hộp thư) vẫn
+  /// được ghi vào buổi vừa chốt: bot báo "ĐI" mà người đó không có tên.
+  Future<bool> updateVotingSessionFields(String id, Map<String, dynamic> data) =>
+      _db.runTransaction((tx) async {
+        final snap = await tx.get(sessions.doc(id));
+        if (!snap.exists || snap.data()?['status'] == 'closed') return false;
+        tx.update(sessions.doc(id), data);
+        return true;
+      });
+
+  /// Sửa một buổi trên bản MỚI NHẤT ở máy chủ rồi lưu + tính lại tiền, trả về
+  /// bản đã lưu (null nếu buổi không còn hoặc [edit] trả null = không đổi).
+  ///
+  /// MỌI thao tác sửa buổi đi qua đây, không lưu bản chụp của màn hình: bản
+  /// chụp có thể đã cũ (máy khác vừa chốt, vừa tích thêm người, webhook vừa
+  /// ghi vote...) và lưu đè cả buổi sẽ làm mất các thay đổi đó - buổi vừa chốt
+  /// bị mở lại, người vừa được thêm biến mất, nước vừa ghi bị xoá.
+  /// [keepRemoteVotes] = false khi người gọi CỐ Ý bỏ vote (xoá người chơi).
+  Future<Session?> editSessionFresh(String id, Session? Function(Session fresh) edit,
+      {bool keepRemoteVotes = true}) async {
+    Session? out;
+    await _chained(() async {
+      for (var attempt = 0; ; attempt++) {
+        final snap = await sessions.doc(id).get();
+        if (!snap.exists) return;
+        final fresh = Session.fromDoc(snap);
+        out = edit(fresh);
+        if (out == null) return;
+        try {
+          await _settleSession(out!, keepRemoteVotes, fresh.status);
+          return;
+        } on SessionChangedElsewhere {
+          // Vừa đổi trạng thái giữa lúc đọc và lúc ghi: đọc lại một lần.
+          if (attempt >= 1) rethrow;
+        }
+      }
+    });
+    return out;
+  }
+
+
   Future<void> deleteSession(String id) async {
     final batch = _db.batch();
     final entries = await ledger.where('refId', isEqualTo: id).get();
@@ -376,6 +430,9 @@ class TeamRepository {
 
   /// Lưu buổi chơi và tính lại toàn bộ tiền (sân, nước, quỹ chung).
   ///
+  /// Lưu đè CẢ buổi bằng [session]: chỉ dùng khi [session] chắc chắn là bản
+  /// mới nhất. Thao tác sửa từ màn hình / Zalo phải đi qua [editSessionFresh].
+  ///
   /// Cách làm: xoá các dòng sổ quỹ cũ của buổi này rồi ghi lại dòng mới,
   /// nên có thể gọi lại bao nhiêu lần cũng được (idempotent).
   /// Số dư quỹ chung được đọc lại từ Firestore ngay lúc tính, màn hình không
@@ -383,17 +440,25 @@ class TeamRepository {
   /// [keepRemoteVotes] = false khi người gọi CỐ Ý bỏ vote (xoá người chơi).
   /// Mặc định true: giữ lại vote mà webhook vừa ghi trong lúc màn hình đang
   /// cầm bản chụp cũ.
+  ///
+  /// [from] là trạng thái của bản mà người gọi đã dựa vào để sửa (đang vote /
+  /// đã chốt). Trên máy chủ khác trạng thái đó nghĩa là máy khác vừa chốt hoặc
+  /// mở lại: báo [SessionChangedElsewhere] thay vì lưu đè bằng bản cũ.
   Future<void> saveAndSettleSession(Session session,
-          {bool keepRemoteVotes = true}) =>
-      _chained(() => _settleSession(session, keepRemoteVotes));
+          {bool keepRemoteVotes = true, SessionStatus? from}) =>
+      _chained(() => _settleSession(session, keepRemoteVotes, from));
 
-  Future<void> _settleSession(Session raw, bool keepRemoteVotes) async {
+  Future<void> _settleSession(Session raw, bool keepRemoteVotes, SessionStatus? from) async {
     // Vote do webhook ghi thẳng vào Firestore có thể tới SAU lúc màn hình chụp
     // bản này. Ghi đè cả tài liệu sẽ làm mất chúng, nên gộp lại trước khi ghi.
     var merged = raw;
-    if (keepRemoteVotes) {
+    if (keepRemoteVotes || from != null) {
       final current = await sessions.doc(raw.id).get();
-      if (current.exists) merged = raw.mergeNewerVotes(Session.fromDoc(current));
+      if (current.exists) {
+        final remote = Session.fromDoc(current);
+        if (from != null && remote.status != from) throw const SessionChangedElsewhere();
+        if (keepRemoteVotes) merged = raw.mergeNewerVotes(remote);
+      }
     }
     // Dọn nước của người đính kèm đã bị bỏ trước khi tính: nếu không, người
     // vote vẫn bị trừ tiền nước của một người không còn đi buổi này.
@@ -410,6 +475,18 @@ class TeamRepository {
       batch.delete(d.reference);
     }
     batch.set(sessions.doc(session.id), updated.toMap());
+
+    // Đang vote thì danh sách còn đổi liên tục: webhook ghi vote thẳng vào
+    // buổi mà không tính lại tiền, nên nếu trừ quỹ lúc này thì chỉ những ai
+    // có mặt ở lần lưu gần nhất bị trừ (có khi một người gánh cả tiền sân).
+    // Sổ quỹ chỉ giữ tiền của buổi ĐÃ CHỐT; chốt (tự chốt lúc hết hạn vote)
+    // mới ghi. Mở lại vote cũng vậy: số đã trừ ở lần chốt trước được hoàn lại
+    // cho tới khi chốt lại - nếu giữ, người mở lại rồi báo không đi vẫn thấy
+    // mình bị trừ tiền của buổi họ không còn đi.
+    if (session.status == SessionStatus.voting) {
+      await batch.commit();
+      return;
+    }
 
     final now = DateTime.now();
     final label = session.title.isEmpty ? 'Buổi chơi' : session.title;

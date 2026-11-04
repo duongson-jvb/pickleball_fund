@@ -106,14 +106,17 @@ class ShareService {
           : '🏦 Chuyển khoản: ${store.settings.bankInfo.trim()}';
 
   static String sessionReport(TeamStore store, Session s) {
-    final st = s.settlement;
+    final st = store.settlementOf(s);
+    final voting = s.status == SessionStatus.voting;
+    // Người bị tính tiền: đang vote thì như thể chốt ngay (đã cắt theo giới hạn).
+    final billed = s.asClosed();
     final sb = StringBuffer('🏓 ${s.title.isEmpty ? 'BUỔI CHƠI' : s.title.toUpperCase()}\n');
     sb.writeln('📅 ${fmtWeekday(s.date)}');
     if (s.location.isNotEmpty) sb.writeln('📍 ${s.location}');
     // Đếm cả người đính kèm, nếu không thì dòng này nói "2 người chơi" trong khi
     // tiền sân chia cho 4 suất - người đọc không hiểu vì sao có người trả gấp đôi.
-    sb.writeln('👥 ${s.playerIds.length} người chơi'
-        '${s.totalCompanions > 0 ? ' + ${s.totalCompanions} đính kèm' : ''}'
+    sb.writeln('👥 ${billed.seatHolders.length} người chơi'
+        '${billed.totalCompanions > 0 ? ' + ${billed.totalCompanions} đính kèm' : ''}'
         '${s.guestCount > 0 ? ' + ${s.guestCount} khách' : ''}');
     if (s.courtFee > 0) {
       sb.writeln('💵 Tiền sân: ${vnd(s.courtFee)}'
@@ -121,10 +124,10 @@ class ShareService {
       if (st.commonUsed > 0) sb.writeln('   - Quỹ chung trả: ${vnd(st.commonUsed)}');
       if (st.guestCash > 0) sb.writeln('   - Khách trả tiền mặt: ${vnd(st.guestCash)}');
     }
-    sb.writeln('\n💳 TRỪ QUỸ TỪNG NGƯỜI');
+    sb.writeln(voting ? '\n💳 DỰ KIẾN TRỪ QUỸ (chưa chốt danh sách)' : '\n💳 TRỪ QUỸ TỪNG NGƯỜI');
     // Gồm cả người không trong danh sách chơi nhưng có ghi nước (nhập hộ qua Zalo).
     // Người đính kèm ("<id>#n") đã gộp tiền vào người vote nên không liệt kê riêng.
-    final pids = {...s.playerIds, ...s.drinks.keys}.where((k) => !Session.isCompanionId(k));
+    final pids = {...billed.seatHolders, ...s.drinks.keys}.where((k) => !Session.isCompanionId(k));
     for (final pid in pids) {
       final court = st.courtPerPlayer[pid] ?? 0;
       final drink = st.drinkPerPlayer[pid] ?? 0;
@@ -132,9 +135,9 @@ class ShareService {
       if (court > 0) parts.add('sân ${vnd(court)}');
       if (drink > 0) parts.add('nước ${vnd(drink)}');
       final detail = parts.isEmpty ? 'không trừ' : parts.join(' + ');
-      final comp = s.companionsOf(pid);
+      final comp = billed.companionsOf(pid);
       sb.writeln('• ${store.playerName(pid)}${comp > 0 ? ' (+$comp đính kèm)' : ''}: $detail'
-          ' → còn ${vnd(store.balanceOf(pid))}');
+          ' → còn ${vnd(store.balanceAfter(s, pid))}');
     }
     if (s.note.isNotEmpty) sb.writeln('📝 ${s.note}');
     return sb.toString();
@@ -155,8 +158,16 @@ class ShareService {
   static String voteText(TeamStore store, Session s) {
     // Bố cục: việc chính (buổi nào, lúc nào) → điều kiện vote → ai đã vote → cách vote.
     // Mỗi khối cách nhau một dòng trống để lướt qua là đọc được trên Zalo.
+    // Nhiều buổi cùng mở vote thì tin nào cũng phải tự nói mình là buổi nào,
+    // vì người trong nhóm reply bằng chữ chứ không trỏ được vào tin cụ thể.
+    // Buổi đã chốt thì không nêu mã: mã đã nhường cho buổi khác, nhóm nhắn
+    // theo mã đó sẽ vote nhầm sang buổi đang mở.
+    final voting = s.status == SessionStatus.voting;
+    final manyOpen = voting &&
+        store.sessions.where((x) => x.status == SessionStatus.voting).length > 1;
+    final tag = voting && s.codeLabel.isNotEmpty ? '[${s.codeLabel}] ' : '';
     final head = [
-      '📊 VOTE ĐẶT SÂN · ${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
+      '📊 VOTE ĐẶT SÂN · $tag${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
       '🕕 ${fmtWeekday(s.date)} · ${_hm(s.date)}',
       if (s.location.isNotEmpty) '📍 ${s.location}',
     ].join('\n');
@@ -178,8 +189,18 @@ class ShareService {
               '${s.companionsOf(pid) > 0 ? ' (+${s.companionsOf(pid)})' : ''}'
               '${added.contains(pid) ? ' · quản lý thêm' : ''}',
           ].join('\n');
-    const guide = '👉 Reply tin này: 1 = đi · 2 = đi 2 người · 0 = không · "@An 1" vote hộ\n'
-        '📌 Quản lý ghim tin này cho dễ thấy. Hết hạn bot tự báo kết quả.';
+    final guide = [
+      if (!voting)
+        '🔒 Đã chốt danh sách. Cần thêm/bớt người thì nhắn quản lý ạ.'
+      else if (manyOpen && s.codeLabel.isNotEmpty)
+        '👉 Có nhiều buổi đang vote. Buổi này là ${s.codeLabel}: nhắn '
+            '"${s.codeLabel} 1" = đi · "${s.codeLabel} 2" = đi 2 người · "${s.codeLabel} 0" = không'
+      else
+        '👉 Reply tin này: 1 = đi · 2 = đi 2 người · 0 = không · "@An 1" vote hộ',
+      if (manyOpen && s.codeLabel.isNotEmpty)
+        '↩️ Nhắn số trống (không kèm mã) thì em tính cho buổi gần nhất ạ.',
+      if (voting) '📌 Quản lý ghim tin này cho dễ thấy. Hết hạn bot tự báo kết quả.',
+    ].join('\n');
     return [head, rules, voted, guide].join('\n\n');
   }
 
@@ -187,15 +208,24 @@ class ShareService {
   static String voteResultText(TeamStore store, Session s) {
     final holders = s.seatHolders;
     final added = s.addedWithoutVote.toSet();
-    // Người quản lý đã đưa vào danh sách chơi thì coi như có đi, dù vote cũ là
-    // "không" - nếu không họ sẽ xuất hiện ở cả hai danh sách trong một tin.
+    // Cùng quy tắc giữ chỗ với danh sách "ĐI" (Session.holdsSeat), nếu không
+    // một người có thể nằm ở cả hai danh sách hoặc không ở danh sách nào.
     final no = s.votes.entries
-        .where((e) => !e.value && !s.playerIds.contains(e.key))
+        .where((e) => !e.value && !s.holdsSeat(e.key))
         .map((e) => store.playerName(e.key))
         .toList();
+    // Đã chốt: người vote "đi" mà không có tên là bị cắt vì hết chỗ. Không nói
+    // ra thì họ tưởng mình có tên (bot đã từng xác nhận "ĐI").
+    final cut = s.status == SessionStatus.closed
+        ? s.votes.entries
+            .where((e) => e.value && !s.holdsSeat(e.key))
+            .map((e) => store.playerName(e.key))
+            .toList()
+        : const <String>[];
     final cap = s.maxPlayers != null ? '/${s.maxPlayers}' : '';
     final blocks = [
-      '🔒 HẾT HẠN VOTE · ${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
+      '🔒 HẾT HẠN VOTE · ${s.codeLabel.isEmpty ? '' : '[${s.codeLabel}] '}'
+          '${s.title.isEmpty ? fmtWeekday(s.date) : s.title}',
       '🕕 ${fmtWeekday(s.date)} · ${_hm(s.date)}${s.location.isNotEmpty ? '\n📍 ${s.location}' : ''}',
       holders.isEmpty
           ? '😢 Chưa có ai vote đi.'
@@ -207,6 +237,7 @@ class ShareService {
                 '${added.contains(pid) ? ' · quản lý thêm' : ''}',
             ].join('\n'),
       if (no.isNotEmpty) '❌ Không đi: ${no.join(', ')}',
+      if (cut.isNotEmpty) '⏳ Hết chỗ: ${cut.join(', ')}. Còn muốn đi thì nhắn quản lý ạ.',
       if (s.maxPlayers != null && s.seatsTaken > s.maxPlayers!)
         '⚠️ Vượt ${s.seatsTaken - s.maxPlayers!} suất so với giới hạn, quản lý chốt danh sách trong app.',
       '📌 Quản lý bỏ ghim tin vote giúp em nhé. Danh sách chính thức xem trong app.',
