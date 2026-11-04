@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../models/models.dart';
 import '../../services/image_util.dart';
+import '../../services/team_repository.dart';
 import '../../services/team_store.dart';
 import '../../utils/format.dart';
 import '../../widgets/admin_gate.dart';
@@ -139,6 +140,7 @@ class _SessionFormScreenState extends State<SessionFormScreen> {
           createdById: creator?.id ?? '',
           voteDeadline: deadline,
           maxPlayers: max,
+          code: store.nextSessionCode,
           createdAt: DateTime.now(),
         );
         final id = await store.repo.createSession(s);
@@ -148,12 +150,9 @@ class _SessionFormScreenState extends State<SessionFormScreen> {
           MaterialPageRoute(builder: (_) => SessionDetailScreen(sessionId: id)),
         );
       } else {
-        // Lấy bản mới nhất (vote có thể vừa về) rồi chỉ ghi đè các trường của form.
-        final latest = store.sessions
-                .where((x) => x.id == widget.session!.id)
-                .firstOrNull ??
-            widget.session!;
-        final s = latest.copyWith(
+        // Chỉ ghi các trường của form lên bản MỚI NHẤT ở máy chủ (vote có thể
+        // vừa về, máy khác có thể vừa chốt hay thêm người).
+        await store.repo.editSessionFresh(widget.session!.id, (latest) => latest.copyWith(
           title: _title.text.trim(),
           date: _date,
           location: _location.text.trim(),
@@ -167,10 +166,11 @@ class _SessionFormScreenState extends State<SessionFormScreen> {
           clearVoteDeadline: deadline == null,
           maxPlayers: max,
           clearMaxPlayers: max == null,
-        );
-        await store.repo.saveAndSettleSession(s);
+        ));
         if (mounted) Navigator.pop(context);
       }
+    } on SessionChangedElsewhere catch (e) {
+      if (mounted) showSnack(context, e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }

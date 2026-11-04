@@ -21,7 +21,7 @@ const player = (id, name, zaloId = '', zaloName = '') => doc(`teams/${TEAM}/play
 });
 
 function sessionDoc({ id = 's1', status = 'voting', dateOffsetH = 48, deadlineOffsetH = 24, title = 'Thứ 7',
-  max = null, votes = {}, companions = {}, voteMsg = '' } = {}) {
+  max = null, votes = {}, companions = {}, voteMsg = '', code = 0, players = [] } = {}) {
   const now = Date.now();
   const f = {
     status: { stringValue: status },
@@ -32,6 +32,8 @@ function sessionDoc({ id = 's1', status = 'voting', dateOffsetH = 48, deadlineOf
     companions: { mapValue: { fields: Object.fromEntries(Object.entries(companions).map(([k, v]) => [k, { integerValue: String(v) }])) } },
   };
   if (max != null) f.maxPlayers = { integerValue: String(max) };
+  if (code) f.code = { integerValue: String(code) };
+  if (players.length) f.playerIds = { arrayValue: { values: players.map((p) => ({ stringValue: p })) } };
   if (voteMsg) f.zaloVoteMessageId = { stringValue: voteMsg };
   return doc(`teams/${TEAM}/sessions/${id}`, f);
 }
@@ -66,8 +68,14 @@ globalThis.fetch = async (url, opts = {}) => {
     return ok({});
   }
   if (u.includes('/sessions')) return ok({ documents: state.sessions });
-  if (u.includes('/zaloInbox/')) { state.saved.push(JSON.parse(opts.body).fields.text.stringValue); return ok({}); }
+  if (u.includes('/zaloInbox/')) {
+    const f = JSON.parse(opts.body).fields;
+    state.saved.push(f.text.stringValue);
+    state.savedSession = f.sessionId?.stringValue || '';
+    return ok({});
+  }
   if (u.includes('generativelanguage')) {
+    state.aiPrompt = opts.body || '';
     if (state.ai === 'down') return ok({ error: { code: 500, message: 'boom' } }, 500);
     return ok({ candidates: [{ content: { parts: [{ text: 'Dạ em đây ạ.' }] } }] });
   }
@@ -211,6 +219,18 @@ console.log('\n— Route cho app/cron: giục nạp quỹ, kết quả vote hế
   await (await worker.fetch(new Request('https://h/cron-votes', { headers: { Authorization: 'Bearer cs' } }), { ...env, CRON_SECRET: 'cs' })).json();
   if (state.sent.length) { fails++; log.push('SAI  /cron-votes đã báo rồi thì không báo lại'); } else log.push('OK   /cron-votes không báo lại buổi đã báo');
   state.announced = false;
+
+  // Buổi app đã tự chốt (giới hạn 1): Tùng vote "đi" nhưng bị cắt, An có tên
+  // trong danh sách dù vote cũ là "không". Kết quả phải theo danh sách chơi.
+  state.sent = []; state.voteState = [];
+  state.sessions = [sessionDoc({ id: 's8', status: 'closed', deadlineOffsetH: -1, dateOffsetH: 2, max: 1, voteMsg: 'm2',
+    votes: { 'p-an': false, 'p-tung': true }, players: ['p-an'] })];
+  await (await worker.fetch(new Request('https://h/cron-votes', { headers: { Authorization: 'Bearer cs' } }), { ...env, CRON_SECRET: 'cs' })).json();
+  const msg = state.sent[0] || '';
+  const okL = msg.includes('ĐI (1/1 suất)') && msg.includes('• An') && !msg.includes('• Tùng') && !msg.includes('Không đi: An')
+    && msg.includes('Hết chỗ: Tùng');
+  if (!okL) fails++;
+  log.push(`${okL ? 'OK  ' : 'SAI '} ${'/cron-votes buổi đã chốt: theo danh sách'.padEnd(40)} "${msg.slice(0, 46).replace(/\n/g, ' ')}"`);
 }
 
 console.log('\n— Không có buổi nào đang mở vote —');
@@ -227,6 +247,106 @@ await check('"vote" vẫn liệt kê kèm "hết hạn"', { text: 'vote' }, { re
 console.log('\n— Ảnh kèm chú thích (nội dung ở caption) —');
 state.sessions = [sessionDoc({ status: 'closed' })];
 await check('caption "n1 2"', { caption: 'n1 2' }, { reply: 'Đã nhận lệnh nước', inbox: true });
+
+console.log('\n— Nhiều buổi cùng mở vote (mã buổi B1/B2) —');
+state.sessions = [
+  sessionDoc({ id: 's1', code: 1, title: 'Thứ 5', dateOffsetH: 48, deadlineOffsetH: 24 }),
+  sessionDoc({ id: 's2', code: 2, title: 'Chủ nhật', dateOffsetH: 120, deadlineOffsetH: 96 }),
+];
+/** Kiểm tra vote được ghi vào đúng buổi. */
+async function checkInto(label, msg, sessionId, want) {
+  const r = await check(label, msg, want);
+  if (!r.patched.some((p) => p.url.includes(`/sessions/${sessionId}?`))) {
+    fails++;
+    log[log.length - 1] += `  ← phải ghi vào buổi ${sessionId}`;
+  }
+  return r;
+}
+await checkInto('"1" trống → buổi gần nhất', { text: '1' }, 's1',
+  { reply: 'ĐI B1 "Thứ 5"', patched: true });
+await checkInto('"B2 1" → buổi Chủ nhật', { text: 'B2 1' }, 's2',
+  { reply: 'ĐI B2 "Chủ nhật"', patched: true });
+await checkInto('"B2 0" → không đi buổi Chủ nhật', { text: 'B2 0' }, 's2',
+  { reply: 'KHÔNG ĐI B2 "Chủ nhật"', patched: true });
+await checkInto('"B2 2" → đi 2 người buổi Chủ nhật', { text: 'B2 2' }, 's2',
+  { reply: '+1 đính kèm', patched: true });
+// Mã không đang mở (buổi vừa chốt / gõ nhầm): không được tính sang buổi gần nhất.
+await check('mã lạ "B9 1" → báo, không ghi vào buổi khác', { text: 'B9 1' },
+  { reply: 'không có buổi B9 đang mở' });
+await check('"B10 1" không bị coi là gõ sai số suất', { text: 'B10 1' },
+  { reply: 'không có buổi B10 đang mở' });
+await checkInto('vote hộ "B2 @An 1"', { text: 'B2 @An 1', from: { id: 'z9', display_name: 'Tùng' } },
+  's2', { reply: 'ĐI B2 "Chủ nhật" · Tùng vote hộ', patched: true });
+await check('"B2 10" vẫn báo nhập sai', { text: 'B2 10' }, { reply: 'chưa hiểu' });
+await check('"vote" liệt kê kèm mã buổi', { text: 'vote' }, { reply: '[B2] Chủ nhật' });
+await check('"vote" hướng dẫn nhắn kèm mã', { text: 'vote' }, { reply: '"B1 1" = đi buổi B1' });
+
+console.log('\n— Mở lại vote sau khi chốt, người trong danh sách nhắn "0" —');
+// Buổi mở lại: danh sách chốt lần trước An, Bình, Tùng (app đã ghi vote "đi" cho họ).
+state.sessions = [sessionDoc({ max: 4, votes: { 'p-an': true, 'p-binh': true, 'p-tung': true }, players: ['p-an', 'p-binh', 'p-tung'] })];
+await check('mở lại vote: An nhắn "0" → còn 2 suất', { text: '0' }, { reply: '👥 2/4 suất', patched: true });
+
+console.log('\n— Người được quản lý thêm vào danh sách rồi nhắn "0" —');
+// An được tích trên app (có trong danh sách chơi, đã vote đi), Bình vote đi.
+state.sessions = [sessionDoc({ max: 4, votes: { 'p-an': true, 'p-binh': true }, players: ['p-an'] })];
+await check('An nhắn "0" → nhả chỗ, còn 1 suất', { text: '0' }, { reply: '👥 1/4 suất', patched: true });
+state.sessions = [sessionDoc({ max: 4, votes: { 'p-an': false, 'p-binh': true }, players: ['p-an'] })];
+await check('"vote" không liệt kê An đã báo không đi', { text: 'vote' }, { reply: '👥 1/4 suất: Bình' });
+state.sessions = [sessionDoc({ max: 2, votes: { 'p-binh': true }, players: ['p-an'] })];
+await check('được thêm, chưa trả lời: vẫn giữ chỗ', { text: 'vote' }, { reply: '👥 2/2 suất: An, Bình' });
+
+{
+  // Ngữ cảnh cho AI phải đếm suất giống câu xác nhận của bot: Bình +1 đính
+  // kèm, An được quản lý thêm (chưa trả lời) → 3/4 suất, không phải "1 người".
+  state.sessions = [sessionDoc({ max: 4, votes: { 'p-binh': true }, companions: { 'p-binh': 1 }, players: ['p-an'] })];
+  state.aiPrompt = '';
+  await send({ text: '@Bot PickleBall JVB sân còn mấy chỗ vậy em' });
+  const okA = state.aiPrompt.includes('3/4 suất đã giữ');
+  if (!okA) fails++;
+  log.push(`${okA ? 'OK  ' : 'SAI '} ${'ngữ cảnh AI đếm suất như bot'.padEnd(40)} ${okA ? '' : '← ' + (state.aiPrompt.match(/đang vote[^;]*/)?.[0] || 'không thấy dòng buổi')}`);
+}
+
+console.log('\n— Tin vote vào hộp thư phải mang theo buổi đã chọn —');
+state.sessions = [
+  sessionDoc({ id: 's1', code: 1, title: 'Thứ 5', dateOffsetH: 48, deadlineOffsetH: 24 }),
+  sessionDoc({ id: 's2', code: 2, title: 'Chủ nhật', dateOffsetH: 120, deadlineOffsetH: 96 }),
+];
+{
+  state.savedSession = '';
+  await check('người lạ "B2 1" → hộp thư kèm buổi B2', { text: 'B2 1', from: { id: 'z-moi', display_name: 'Người Mới' } },
+    { reply: 'Đã nhận vote', inbox: true });
+  if (state.savedSession !== 's2') { fails++; log[log.length - 1] += `  ← hộp thư phải ghi buổi s2, đang ghi "${state.savedSession}"`; }
+  state.patchFail = true;
+  state.savedSession = '';
+  await check('ghi vote lỗi → hộp thư kèm buổi gần nhất', { text: '1' }, { reply: 'chưa ghi được ngay', inbox: true });
+  state.patchFail = false;
+  if (state.savedSession !== 's1') { fails++; log[log.length - 1] += `  ← hộp thư phải ghi buổi s1, đang ghi "${state.savedSession}"`; }
+}
+
+console.log('\n— Tin giống vote nhưng không phải vote —');
+state.sessions = [sessionDoc({ max: 4 })];
+await check('"@Bình tham" không ghi Bình là đi', { text: '@Bình tham' }, { reply: 'Dạ em đây' });
+await check('"2 người ?" là câu hỏi, không ghi vote', { text: '2 người ?' }, { reply: 'Dạ em đây' });
+await check('"2 người !" vẫn là vote 2 suất', { text: '2 người !' }, { reply: '+1 đính kèm', patched: true });
+await check('hai mã "b12 0.1 B10" vẫn báo gõ sai', { text: 'b12 0.1 B10' }, { reply: 'chưa hiểu' });
+
+console.log('\n— Tên có chữ cái rời ("Tuấn B") không bị đọc thành mã buổi —');
+state.players.push(player('p-tuanb', 'Tuấn B'));
+state.sessions = [
+  sessionDoc({ id: 's1', code: 1, title: 'Thứ 5', dateOffsetH: 48, deadlineOffsetH: 24 }),
+  sessionDoc({ id: 's2', code: 2, title: 'Chủ nhật', dateOffsetH: 120, deadlineOffsetH: 96 }),
+];
+await checkInto('vote hộ "@Tuấn B 1" → buổi gần nhất', { text: '@Tuấn B 1' }, 's1',
+  { reply: '✅ Tuấn B ĐI B1 "Thứ 5"', patched: true });
+await checkInto('vote hộ "@Tuấn B B2 1" → buổi B2', { text: '@Tuấn B B2 1' }, 's2',
+  { reply: '✅ Tuấn B ĐI B2 "Chủ nhật"', patched: true });
+state.players.pop();
+// B1 đã chốt, đang mở B2 và B3: ví dụ trong hướng dẫn phải là mã đang mở.
+state.sessions = [
+  sessionDoc({ id: 's2', code: 2, title: 'Chủ nhật', dateOffsetH: 120, deadlineOffsetH: 96 }),
+  sessionDoc({ id: 's3', code: 3, title: 'Thứ 3', dateOffsetH: 200, deadlineOffsetH: 190 }),
+];
+await check('"vote" ví dụ dùng mã đang mở (B2)', { text: 'vote' }, { reply: '"B2 1" = đi buổi B2' });
 
 console.log('\n— Thiếu BOT_REFRESH_TOKEN (không được tạo tài khoản ẩn danh) —');
 state.sessions = [sessionDoc({ max: 4 })];

@@ -408,35 +408,55 @@ class Session {
   /// playerId -> số người đính kèm đi cùng (vote "2" = 1 đính kèm, "3" = 2...).
   /// Tiền sân / tiền nước của người đính kèm trừ vào người vote.
   final Map<String, int> companions;
+
+  /// Mã ngắn của buổi, hiện trong tin vote để người trong nhóm nhắn đúng buổi
+  /// khi có nhiều buổi cùng mở vote: "B1 1", "B2 0"... 0 = chưa gán mã.
+  final int code;
   final DateTime createdAt;
+
+  /// Nhãn mã ngắn, ví dụ "B1". Rỗng khi buổi chưa được gán mã.
+  String get codeLabel => code > 0 ? 'B$code' : '';
 
   /// Hạn vote hiệu lực: nếu không đặt thì bằng giờ bắt đầu chơi.
   DateTime get effectiveVoteDeadline => voteDeadline ?? date;
   bool get voteExpired => DateTime.now().isAfter(effectiveVoteDeadline);
   bool get isVoteOpen => status == SessionStatus.voting && !voteExpired;
 
-  /// Số chỗ đã giữ theo vote "đi" (mỗi người + số đính kèm của họ).
-  /// Những người đang giữ chỗ: người vote "đi" CỘNG người quản lý thêm thẳng
-  /// vào danh sách chơi. Buổi đã chốt thì chỉ còn danh sách chơi - lúc đó
-  /// `votes` vẫn giữ cả người bị cắt vì hết chỗ, đếm theo đó sẽ ra số ảo.
+  /// Người này có đang giữ chỗ không.
   ///
-  /// Trước đây chỗ này chỉ đếm `votes`, nên người được thêm tay không chiếm
-  /// suất nào: app tưởng còn chỗ, nhận thêm vote, rồi lúc chốt người vote sau
-  /// bị cắt dù bot đã xác nhận "đã có chỗ".
+  /// Buổi đã chốt: chỉ người trong danh sách chơi (`votes` lúc đó vẫn giữ cả
+  /// người bị cắt vì hết chỗ). Đang vote: câu trả lời MỚI NHẤT của người đó
+  /// quyết định - "đi" là có, "không" là không, kể cả khi trước đó quản lý đã
+  /// thêm họ vào danh sách; chưa trả lời thì theo danh sách quản lý thêm.
+  ///
+  /// Không được để danh sách thắng vote "không": webhook chỉ ghi được `votes`
+  /// (rules không cho đụng `playerIds`), nên người đã được thêm mà nhắn "0"
+  /// sẽ vẫn bị giữ chỗ, bot vẫn đếm và lúc chốt vẫn bị trừ tiền.
+  bool holdsSeat(String id) {
+    if (status == SessionStatus.closed) return playerIds.contains(id);
+    return votes[id] ?? playerIds.contains(id);
+  }
+
+  /// Những người đang giữ chỗ (xem [holdsSeat]): người quản lý thêm vào danh
+  /// sách mà chưa báo không đi, rồi người vote "đi" theo giờ vote.
+  ///
   /// Thứ tự giống [playersForClosing] để danh sách bot báo lên nhóm trùng với
   /// thứ tự ưu tiên khi phải cắt bớt vì hết chỗ.
   List<String> get seatHolders {
     if (status == SessionStatus.closed) return playerIds;
-    final out = [...playerIds];
+    final out = [
+      for (final id in playerIds)
+        if (votes[id] != false) id,
+    ];
     for (final id in votedYesByTime) {
       if (!out.contains(id)) out.add(id);
     }
     return out;
   }
 
-  /// Người quản lý thêm thẳng vào danh sách, không qua vote.
+  /// Người quản lý thêm thẳng vào danh sách, chưa tự trả lời vote.
   List<String> get addedWithoutVote =>
-      [for (final id in playerIds) if (votes[id] != true) id];
+      [for (final id in playerIds) if (!votes.containsKey(id)) id];
 
   int get seatsTaken =>
       seatHolders.fold(0, (acc, id) => acc + 1 + (companions[id] ?? 0));
@@ -447,8 +467,9 @@ class Session {
   /// Số đính kèm của một người trong danh sách chơi.
   int companionsOf(String playerId) => companions[playerId] ?? 0;
 
-  /// Tổng người đính kèm của những người trong danh sách chơi.
-  int get totalCompanions => playerIds.fold(0, (s, id) => s + companionsOf(id));
+  /// Tổng người đính kèm của những người đang giữ chỗ.
+  int get totalCompanions =>
+      seatHolders.fold(0, (s, id) => s + companionsOf(id));
 
   /// Id ảo của người đính kèm: `playerId#1`, `playerId#2`... (dùng cho tiền nước).
   static String companionId(String hostId, int n) => '$hostId#$n';
@@ -500,7 +521,8 @@ class Session {
   ///
   /// Phân biệt bằng `voteTimes`: chỉ lấy lại mục nào máy chủ có mốc thời gian
   /// MỚI HƠN bản đang cầm (hoặc bản đang cầm chưa từng thấy người đó). Quản lý
-  /// tự bật/tắt vote trên giao diện không đổi `voteTimes` nên không bị ghi đè.
+  /// bật/tắt tên trên giao diện cũng ghi mốc giờ lúc bấm, nên thao tác mới
+  /// nhất thắng - của quản lý hay của chính người vote.
   Session mergeNewerVotes(Session remote) {
     final votes = {...this.votes};
     final times = {...voteTimes};
@@ -527,6 +549,135 @@ class Session {
         : this;
   }
 
+  /// Mã ngắn kế tiếp cho buổi mới (B1, B2...): số nhỏ nhất chưa dùng trong
+  /// các buổi còn mở vote. Buổi đã chốt không nhận vote nữa nên mã của nó
+  /// được dùng lại, mã luôn ngắn dù nhóm chơi cả năm.
+  static int nextCode(Iterable<Session> sessions) {
+    final used = {
+      for (final s in sessions)
+        if (s.status != SessionStatus.closed) s.code,
+    };
+    var n = 1;
+    while (used.contains(n)) {
+      n++;
+    }
+    return n;
+  }
+
+  /// Mã cho buổi [s] khi mở lại vote: giữ mã cũ nếu chưa buổi nào đang mở
+  /// dùng, không thì lấy mã mới. Buổi đã chốt nhường mã cho buổi khác, nên mở
+  /// lại mà giữ mã cũ có thể ra hai buổi cùng mã và "B1 1" không biết vào đâu.
+  static int codeForReopen(Iterable<Session> sessions, Session s) {
+    final others = [
+      for (final x in sessions)
+        if (x.id != s.id) x,
+    ];
+    final taken = {
+      for (final x in others)
+        if (x.status != SessionStatus.closed) x.code,
+    };
+    return s.code > 0 && !taken.contains(s.code) ? s.code : nextCode(others);
+  }
+
+  /// Buổi còn mở vote cần gán (lại) mã: id → mã mới. Gồm buổi chưa có mã và
+  /// buổi trùng mã với buổi khác (máy cũ mở lại vote, hai máy tạo cùng lúc).
+  ///
+  /// Trùng mã thì buổi tạo SAU giữ mã - tin vote của nó mới gửi, mã đó đang
+  /// được nhóm dùng - còn buổi tạo trước đổi sang mã nhỏ nhất còn trống.
+  static Map<String, int> codeFixes(Iterable<Session> sessions) {
+    final open = [
+      for (final s in sessions)
+        if (s.status != SessionStatus.closed) s,
+    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final used = <int>{};
+    final missing = <Session>[];
+    for (final s in open) {
+      if (s.code > 0 && used.add(s.code)) continue;
+      missing.add(s);
+    }
+    missing.sort((a, b) => a.date.compareTo(b.date));
+    final out = <String, int>{};
+    var next = 1;
+    for (final s in missing) {
+      while (used.contains(next)) {
+        next++;
+      }
+      used.add(next);
+      out[s.id] = next;
+    }
+    return out;
+  }
+
+  /// Buổi như thể chốt ngay bây giờ: danh sách chơi lấy theo [playersForClosing]
+  /// (cắt theo giới hạn), người đính kèm giảm cho vừa. Đã chốt thì là chính nó.
+  ///
+  /// Dùng cho cả lúc chốt thật lẫn số dự kiến lúc đang vote, để số dự kiến
+  /// đúng bằng số sẽ trừ: người vượt giới hạn bị cắt khi chốt thì không được
+  /// tính tiền sân, nước của người đính kèm bị bớt cũng không được tính.
+  Session asClosed() {
+    if (status == SessionStatus.closed) return this;
+    final ids = playersForClosing();
+    return copyWith(
+      status: SessionStatus.closed,
+      playerIds: ids,
+      companions: companionsForClosing(ids),
+    );
+  }
+
+  /// Quản lý bật/tắt một người trong danh sách người đi (một danh sách duy nhất).
+  ///
+  /// Ghi như câu trả lời của chính người đó (vote + mốc giờ [at]), nên sau đó
+  /// họ nhắn "0"/"1" trên Zalo vẫn đổi được. Đang vote KHÔNG thêm vào danh sách
+  /// chơi - người được tích muộn sẽ chen lên trước người vote sớm khi phải cắt
+  /// vì hết chỗ; bỏ tích thì rời danh sách và bỏ người đính kèm. Đã chốt thì
+  /// danh sách chơi chính là danh sách người đi.
+  Session withAdminAnswer(String id, bool going, DateTime at) {
+    final ids = [...playerIds];
+    if (!going) {
+      ids.remove(id);
+    } else if (status == SessionStatus.closed && !ids.contains(id)) {
+      ids.add(id);
+    }
+    final comp = {...companions};
+    if (!going) comp.remove(id);
+    return copyWith(
+      votes: {...votes, id: going},
+      voteTimes: {...voteTimes, id: at},
+      playerIds: ids,
+      companions: comp,
+    );
+  }
+
+  /// Mở lại vote cho buổi đã chốt với mã buổi [code]: danh sách lúc mở lại
+  /// đúng bằng danh sách đã chốt.
+  ///
+  /// Người đang trong danh sách chơi được tính là đã vote "đi" - đó là quyết
+  /// định mới nhất về họ. Không làm vậy thì vote "không" cũ của họ (hoặc của
+  /// người được quản lý thêm sau khi chốt) lại có hiệu lực và họ mất chỗ.
+  /// Người vote "đi" mà bị cắt lúc chốt (hết chỗ) thì bỏ câu trả lời cũ: không
+  /// bỏ thì họ tự quay lại danh sách, chiếm chỗ, bot báo hết chỗ oan với người
+  /// khác. Còn muốn đi thì họ vote lại.
+  ///
+  /// Lưu bản này KHÔNG được gộp vote từ máy chủ (gộp sẽ đưa vote đã bỏ quay
+  /// lại); lúc mở lại buổi đang chốt nên webhook không ghi được vote nào.
+  Session reopened({required int code}) {
+    final cut = {
+      for (final e in votes.entries)
+        if (e.value && !playerIds.contains(e.key)) e.key,
+    };
+    return copyWith(
+      status: SessionStatus.voting,
+      votes: {
+        for (final e in votes.entries)
+          if (!cut.contains(e.key)) e.key: e.value,
+        for (final id in playerIds) id: true,
+      },
+      voteTimes: {...voteTimes}..removeWhere((k, _) => cut.contains(k)),
+      companions: {...companions}..removeWhere((k, _) => cut.contains(k)),
+      code: code,
+    );
+  }
+
   /// Người đó có để lại dấu vết gì trong buổi này không.
   bool mentions(String playerId) =>
       playerIds.contains(playerId) ||
@@ -535,9 +686,9 @@ class Session {
       companions.containsKey(playerId) ||
       drinks.keys.any((k) => hostOf(k) == playerId);
 
-  /// Các id ảo của người đính kèm theo danh sách chơi.
+  /// Các id ảo của người đính kèm của những người đang giữ chỗ.
   List<String> get companionIds => [
-        for (final id in playerIds)
+        for (final id in seatHolders)
           for (var n = 1; n <= companionsOf(id); n++) companionId(id, n),
       ];
 
@@ -558,10 +709,9 @@ class Session {
   /// theo thứ tự vote. Có giới hạn thì tính cả người đính kèm: ai vào không đủ
   /// chỗ cho cả nhóm thì giảm số đính kèm cho vừa, hết chỗ thì dừng.
   List<String> playersForClosing() {
-    final ids = [...playerIds];
-    for (final id in votedYesByTime) {
-      if (!ids.contains(id)) ids.add(id);
-    }
+    // Cùng một quy tắc với [seatHolders]: ai đã báo "không đi" thì không được
+    // đưa vào danh sách chốt dù trước đó có tên trong danh sách.
+    final ids = [...seatHolders];
     if (maxPlayers == null) return ids;
     final out = <String>[];
     var seats = 0;
@@ -615,6 +765,7 @@ class Session {
     this.maxPlayers,
     this.voteTimes = const {},
     this.companions = const {},
+    this.code = 0,
     required this.createdAt,
   });
 
@@ -664,6 +815,7 @@ class Session {
       companions: ((d['companions'] as Map?) ?? {})
           .map((k, v) => MapEntry(k.toString(), _toInt(v)))
         ..removeWhere((_, v) => v <= 0),
+      code: _toInt(d['code']),
       createdAt: _toDate(d['createdAt']),
     );
   }
@@ -690,6 +842,7 @@ class Session {
         'maxPlayers': maxPlayers,
         'voteTimes': voteTimes.map((k, v) => MapEntry(k, Timestamp.fromDate(v))),
         'companions': companions,
+        'code': code,
         'createdAt': Timestamp.fromDate(createdAt),
       };
 
@@ -718,6 +871,7 @@ class Session {
     bool clearMaxPlayers = false,
     Map<String, DateTime>? voteTimes,
     Map<String, int>? companions,
+    int? code,
   }) =>
       Session(
         id: id,
@@ -743,6 +897,7 @@ class Session {
         maxPlayers: clearMaxPlayers ? null : (maxPlayers ?? this.maxPlayers),
         voteTimes: voteTimes ?? this.voteTimes,
         companions: companions ?? this.companions,
+        code: code ?? this.code,
         createdAt: createdAt,
       );
 }

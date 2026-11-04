@@ -28,6 +28,10 @@ class ZaloUpdate {
   final String text;
   final DateTime date;
 
+  /// Buổi webhook đã chọn cho tin vote khi phải để app ghi hộ (tin trong hộp
+  /// thư). Rỗng = tin không gắn buổi (lệnh nước, tin lấy thẳng từ Zalo).
+  final String sessionId;
+
   const ZaloUpdate({
     required this.eventName,
     required this.messageId,
@@ -37,6 +41,7 @@ class ZaloUpdate {
     required this.chatType,
     required this.text,
     required this.date,
+    this.sessionId = '',
   });
 
   bool get isGroup => chatType.toUpperCase() == 'GROUP';
@@ -63,6 +68,7 @@ class ZaloUpdate {
       chatType: d['chatType']?.toString() ?? 'PRIVATE',
       text: d['text']?.toString() ?? '',
       date: date,
+      sessionId: d['sessionId']?.toString() ?? '',
     );
   }
 

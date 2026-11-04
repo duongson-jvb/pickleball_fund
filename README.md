@@ -15,8 +15,19 @@ Chạy được trên iOS, Android và Web (bản web được deploy tự độ
     cách lúc tạo ít nhất 30 phút), **giới hạn số người** (trống = không giới hạn).
     Hết hạn vote → máy quản trị tự chốt danh sách (cắt theo giới hạn). Đủ người → không nhận thêm vote "đi",
     người đã "đi" vẫn đổi ý được. Vote sau hạn bị bỏ qua (cả trong app lẫn từ Zalo; rules cũng chặn).
-  - Vote người chơi trong app, tạo nội dung vote gửi lên Zalo, dán kết quả vote từ Zalo để app tự khớp tên.
-  - Chốt danh sách từ vote, vẫn sửa được người chơi thực tế (thêm người không vote, thêm khách) – tiền tự tính lại.
+  - **Nhiều buổi cùng mở vote** được: mỗi buổi có **mã ngắn** (B1, B2...) hiện trong tin vote,
+    nhóm nhắn `B2 1` là vote cho buổi B2; nhắn số trống thì tính cho buổi gần nhất.
+    Mã lấy số nhỏ nhất chưa dùng trong các buổi còn mở, buổi đã chốt nhường lại mã.
+  - **Một danh sách người đi duy nhất**: tích tên ai là người đó vào luôn danh sách tính tiền
+    (không còn tách "vote" và "người chơi thực tế"). Thêm người không vote, thêm khách, sửa
+    đính kèm – tiền tự tính lại ngay. Câu trả lời **mới nhất** của mỗi người quyết định: quản lý đã
+    tích mà sau đó người đó nhắn `0` trên Zalo thì họ nhả chỗ.
+    Đang vote thì tiền ở tab Tổng kết là **số dự kiến**; tiền chỉ **trừ vào quỹ khi chốt danh sách**
+    (tự chốt lúc hết hạn vote), để vote qua Zalo về liên tục không làm sổ quỹ trừ dở dang.
+    **Mở lại vote** thì tiền của buổi đó được hoàn lại cho tới khi chốt lại (ai nhắn `0` lúc này ra
+    khỏi danh sách và không bị trừ); hạn vote đã qua thì phải dời hạn trước, không thì app tự chốt ngay.
+    Nhiều buổi cùng mở thì số dự kiến chia quỹ chung theo thứ tự buổi diễn ra trước.
+  - Tạo nội dung vote gửi lên Zalo, dán kết quả vote từ Zalo để app tự khớp tên.
   - Nhập tiền sân: trừ quỹ chung trước, hết quỹ chung thì chia đều phần thiếu cho người chơi trong buổi.
   - Tiền nước: nhiều loại nước, giá khác nhau, mỗi người tự trả theo số lượng. Giá nước theo ngày: buổi chơi lấy giá của lần sửa gần nhất, có thể sửa riêng cho từng buổi.
   - Gắn ảnh xác nhận đặt sân vào từng buổi.
@@ -48,8 +59,21 @@ Chạy được trên iOS, Android và Web (bản web được deploy tự độ
 flutter pub get
 flutter run            # iOS / Android / Chrome
 flutter test           # unit test logic chia tiền
+node webhook/e2e-test.mjs   # kịch bản webhook (Firestore + Zalo giả lập, không cần mạng)
 flutter build web --release --base-href /pickleball_fund/
 ```
+
+Logic đọc vote và đếm suất nằm ở **cả app (Dart) lẫn webhook (JS)** - sửa một bên phải sửa bên
+kia. `test/app_webhook_parity_test.dart` (chạy trong `flutter test`, cần Node) cho hai bên tính
+cùng hàng nghìn tình huống ngẫu nhiên và báo đỏ khi lệch; `test/money_invariants_test.dart` kiểm
+các điều không được sai của phần tính tiền (tiền sân chia ra cộng lại đúng bằng tiền sân, chỉ
+người giữ chỗ bị trừ, số dự kiến lúc vote đúng bằng số trừ khi chốt...); `test/session_flow_test.dart`
+chạy hàng nghìn chuỗi thao tác ngẫu nhiên (vote Zalo, quản lý tích, chốt, mở lại, ghi nước, xoá
+người) và so danh sách + tiền với "câu trả lời mới nhất" sau từng bước.
+
+Mọi thao tác sửa buổi chơi phải đi qua `TeamRepository.editSessionFresh` (áp lên bản mới nhất ở
+máy chủ), không lưu đè bản chụp của màn hình: bản chụp có thể đã cũ (máy khác vừa chốt, webhook vừa
+ghi vote) và lưu đè sẽ mở lại buổi vừa chốt hoặc làm mất người / nước vừa thêm.
 
 Firebase project: `pickleball-fund-phm` (cấu hình đã có sẵn trong `lib/firebase_options.dart`).
 Để đổi sang Firebase project khác:
@@ -95,6 +119,9 @@ Zalo không có API công khai để tạo / đọc bình chọn trong nhóm cha
    **Vote hộ**: `@An 1`, `@An 0`, `@Bình 0 @An 2` (nhiều người trong một tin; phần trước @ đầu tiên là vote của
    chính người gửi; bot xác nhận từng người kèm "(Tùng vote hộ)"). Câu có @tên nhưng không phải vote ("@An đi không?")
    thì bot trả lời như câu hỏi.
+   **Nhiều buổi cùng mở vote**: tin vote của mỗi buổi mang **mã buổi** (B1, B2...) ở tiêu đề; nhắn
+   `B2 1` / `B2 0` / `B2 2` để vote đúng buổi đó (`B2 @An 1` để vote hộ), nhắn số trống thì bot tính
+   cho buổi gần nhất và câu xác nhận nói rõ đã ghi vào buổi nào.
    **Chỉ tính tin gửi sau khi buổi chơi được tạo.** Gõ số sai ("10", "01", "1,2,3"), vote khi chưa có
    buổi nào đang mở vote, hoặc vote sau hạn — bot đều **báo lại** chứ không im lặng bỏ qua.
 6. **Ghi nước qua Zalo**: gõ `@bot nước` để bot liệt kê các loại nước kèm **mã ngắn** (N1, N2...) và giá hiện tại
